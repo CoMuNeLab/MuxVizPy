@@ -1,0 +1,125 @@
+Metadata-Version: 2.4
+Name: MuxVizPy
+Version: 1.0.0
+Summary: A multilayer network analysis library inspired by MuxViz, using graph-tool and scientific Python
+Author: Francesco Zambelli
+License: MIT
+Project-URL: Homepage, https://github.com/CoMuNeLab/MuxVizPy
+Project-URL: Repository, https://github.com/CoMuNeLab/MuxVizPy
+Keywords: networks,graph-tool,multilayer,multiplex,centrality,network science
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.21
+Requires-Dist: scipy>=1.7
+Requires-Dist: pandas>=1.3
+Requires-Dist: matplotlib>=3.4
+Requires-Dist: tqdm>=4.60
+
+# MuxVizPy
+
+**MuxVizPy** is a Python package for multilayer and multiplex network analysis, inspired by the original [MuxViz](http://muxviz.net/) software.  
+It provides tools to compute centralities, structural descriptors, mesoscale properties, percolation, and versatile visualizations—backed by [`graph-tool`](https://graph-tool.skewed.de/) and the scientific Python ecosystem.
+
+---
+
+## Features
+
+- Construction of multilayer networks from CSV or metadata
+- Aggregate and supra-adjacency matrix utilities
+- Multiplex-aware centrality measures:
+  - Eigenvector, Katz, Random Walk (PageRank/classical), Hub, Authority, K-Core
+- Topological descriptors:
+  - Largest connected components, shortest-path matrices, similarity
+- Mesoscale analysis:
+  - Modularity, blockmodels, assortativity
+- Percolation analysis
+- 3D multilayer network visualization with `matplotlib`
+
+---
+
+## Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/your-username/MuxVizPy.git
+cd MuxVizPy
+
+# (Recommended) Create a virtual environment
+python -m venv venv
+source venv/bin/activate  # or `.env\Scriptsctivate` on Windows
+
+# Install dependencies
+pip install -e .
+```
+
+⚠️ **Note**: `graph-tool` is **not pip-installable**.  
+Install it manually via [official instructions](https://git.skewed.de/count0/graph-tool/) or using `conda`:
+
+```bash
+conda install -c conda-forge graph-tool
+```
+
+---
+
+## 🧠 Basic Usage
+
+```python
+from MuxVizPy import VirusMultiplex
+from MuxVizPy import build, versatility, plotMux
+
+import pandas as pd
+
+# Load metadata (make sure meta_df is defined)
+meta_df = pd.read_csv("data/metadata.csv")  # <- You must define or load this
+vm = VirusMultiplex(indexes=[0, 2, 5], target_folder="data/", virus_metadata=meta_df)
+
+# Build supra-adjacency matrix
+supra = build.build_supra_adjacency_matrix_from_network_list(vm.g_list)
+
+# Compute random-walk centrality
+centrality = versatility.get_multi_RW_centrality(supra, vm.Layers, vm.Nodes)
+
+# Plot the multilayer network in 3D
+plotMux.plotMultiplex(vm.g_list, supra)
+```
+
+---
+
+## 📁 Project Structure
+
+```
+MuxVizPy/
+├── build.py
+├── core.py
+├── leading_eigenv_approx.py
+├── mesoscale.py
+├── percolation.py
+├── plotMux.py
+├── topology.py
+├── utils.py
+├── versatility.py
+├── visualization.py
+├── __init__.py
+README.md
+pyproject.toml
+```
+
+---
+
+## 📚 Requirements
+
+- Python ≥ 3.8
+- numpy, scipy, pandas, matplotlib, tqdm
+- graph-tool (system package)
+
+---
+
+## 📄 License
+
+MIT License 2025 
+---
+
+## 📬 Acknowledgements
+
+- Inspired by the original [MuxViz](https://github.com/manlius/muxViz) platform.
+- Built with `graph-tool`, a performant graph analysis library.

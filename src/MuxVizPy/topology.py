@@ -3,7 +3,6 @@ import scipy as sp
 import scipy.sparse as sps
 from scipy.sparse import find, identity, coo_matrix
 import graph_tool as gt
-from graph_tool import centrality, inference
 import graph_tool.correlations as gtcorr
 import graph_tool.clustering as gtclust
 from functools import reduce
@@ -12,7 +11,23 @@ from tqdm import tqdm
 from .leading_eigenv_approx import leading_eigenv_approx
 from .build import *
 
-def get_multi_LCC(obj, obj_type="glist"):
+def get_multi_LCC(obj: list[gt.Graph] | list[sps.spmatrix], obj_type: str = "glist") -> np.ndarray:
+    """
+    Computes the physical nodes belonging to the largest connected component (LCC)
+    of a multilayer network.
+
+    Parameters
+    ----------
+    obj : list
+        Either a list of graph_tool graphs or a node tensor (list of adjacency matrices).
+    obj_type : str, optional
+        One of ["glist", "tensor"], specifying the format of `obj`.
+
+    Returns
+    -------
+    np.ndarray
+        Indices of nodes in the multilayer LCC.
+    """
     if obj_type=="glist":
         tensor = get_node_tensor_from_network_list(obj)
     elif obj_type=="tensor":
@@ -23,7 +38,23 @@ def get_multi_LCC(obj, obj_type="glist"):
     
     return lcc
 
-def get_multi_LIC(obj, obj_type="glist"):
+def get_multi_LIC(obj: list[gt.Graph] | list[sps.spmatrix], obj_type: str = "glist") -> np.ndarray:
+    """
+    Computes the largest intersection component (LIC) — i.e., the intersection of LCCs
+    across all layers.
+
+    Parameters
+    ----------
+    obj : list
+        Either a list of graph_tool graphs or a tensor of adjacency matrices.
+    obj_type : str, optional
+        One of ["glist", "tensor"].
+
+    Returns
+    -------
+    np.ndarray
+        Indices of physical nodes in the LIC.
+    """
     if obj_type=="glist":
         glist = obj
     elif obj_type=="tensor":
@@ -38,8 +69,23 @@ def get_multi_LIC(obj, obj_type="glist"):
     
     return lcc_inters
     
+def get_multi_LVC(g_list: list[gt.Graph], printt: bool = True) -> np.ndarray:
+    """
+    Computes the largest versatile component (LVC) by recursively pruning
+    nodes that are not part of the LIC.
 
-def get_multi_LVC(g_list, printt=True):
+    Parameters
+    ----------
+    g_list : list of graph_tool.Graph
+        List of networks representing each layer.
+    printt : bool, optional
+        If True, prints iteration logs.
+
+    Returns
+    -------
+    np.ndarray
+        Indices of nodes in the LVC.
+    """
     g_l = [gt.Graph(g) for g in g_list]
     layers = len(g_l)
     lvc = None
@@ -81,7 +127,25 @@ def get_multi_LVC(g_list, printt=True):
         lvc = lic
 
 
-def get_connected_components(supra, layers, nodes):
+def get_connected_components(supra: sps.spmatrix, layers: int, nodes: int) -> np.ndarray:
+    """
+    Computes connected components in a multilayer network, ensuring each physical
+    node is consistently labeled across layers.
+
+    Parameters
+    ----------
+    supra : scipy.sparse matrix
+        Supra-adjacency matrix.
+    layers : int
+        Number of layers.
+    nodes : int
+        Number of physical nodes.
+
+    Returns
+    -------
+    np.ndarray
+        Component labels for each physical node.
+    """
     g = gt.Graph(directed=False)
     g.add_edge_list(np.transpose(supra.nonzero()))
     components_all = gt.topology.label_components(g)
@@ -119,8 +183,30 @@ def get_connected_components(supra, layers, nodes):
         components[np.where(new_components==comps[i])]=i
 
     return components
-    
-def get_multi_path_statistics(supra, layers, nodes):
+def get_multi_path_statistics(supra: sps.spmatrix, layers: int, nodes: int) -> dict:
+    """
+    Computes multilayer shortest path statistics including:
+    - distance matrix
+    - average path length
+    - closeness centrality
+
+    Parameters
+    ----------
+    supra : scipy.sparse matrix
+        Supra-adjacency matrix.
+    layers : int
+        Number of layers.
+    nodes : int
+        Number of physical nodes.
+
+    Returns
+    -------
+    dict
+        Dictionary with keys:
+        - "distance_matrix": np.ndarray
+        - "avg_path_length": float
+        - "closeness": list of float
+    """
     n = supra.shape[0]
 
     if layers==1:
@@ -174,10 +260,24 @@ def get_multi_path_statistics(supra, layers, nodes):
             "avg_path_length":avg_path_length,
             "closeness":closeness}
             
-            
-            
-def get_SP_similarity_matrix(supra, layers, nodes):
-    
+def get_SP_similarity_matrix(supra: sps.spmatrix, layers: int, nodes: int) -> np.ndarray:
+    """
+    Computes shortest-path-based similarity matrix between layers.
+
+    Parameters
+    ----------
+    supra : scipy.sparse matrix
+        Supra-adjacency matrix.
+    layers : int
+        Number of layers.
+    nodes : int
+        Number of physical nodes.
+
+    Returns
+    -------
+    np.ndarray
+        Symmetric matrix of pairwise similarity between layers.
+    """
     distance_list = []
 
     g_list = supra_adjacency_to_network_list(supra, layers, nodes)

@@ -1,35 +1,48 @@
-from MuxVizPy import leading_eigenv_approx 
-from MuxVizPy import build
-from MuxVizPy import versatility
-from MuxVizPy import topology
-from MuxVizPy import utils
-from MuxVizPy import mesoscale
-from MuxVizPy import percolation
-from MuxVizPy import plotMux
-from MuxVizPy import visualization
-
 import numpy as np
-import networkx as nx
-import matplotlib.pyplot as plt
-import seaborn as sns
-import scipy as sp
-import scipy.sparse as sps
-from scipy.sparse import find, identity, coo_matrix
 import pandas as pd
 import graph_tool as gt
-from graph_tool import centrality, inference
-import graph_tool.correlations as gtcorr
-import graph_tool.clustering as gtclust
-from tqdm import tqdm
 from operator import itemgetter
-from functools import reduce
-import itertools
 
 import warnings
 warnings.filterwarnings("ignore")
 
 
 class VirusMultiplex():
+    """
+    Builds a multilayer protein-protein interaction (PPI) network using metadata and edge/node data from viruses.
+
+    Parameters
+    ----------
+    indexes : list of int
+        List of row indices from `virus_metadata` to include in the analysis.
+    target_folder : str
+        Path to the folder containing the edge and node CSV files for each virus.
+    virus_metadata : pandas.DataFrame
+        Metadata dataframe including virus name, shorthand, and neighborhood order.
+    NEIGH_ORDER : int, optional
+        Neighborhood order to filter virus metadata entries (default is 1).
+
+    Attributes
+    ----------
+    g_list : list of graph_tool.Graph
+        List of per-layer PPI networks, one per virus.
+    g_multi : graph_tool.Graph
+        Edge-colored multilayer network containing all edges across viruses.
+    node_map : dict
+        Dictionary mapping protein names to unique integer node indices.
+    mux_ppi : pandas.DataFrame
+        Concatenated edge list with additional node/layer mappings.
+    layer_map : dict
+        Mapping from layer name to layer index.
+    net_description : str
+        Human-readable description of the multilayer structure.
+    Layers : int
+        Total number of layers (viruses).
+    Nodes : int
+        Total number of unique proteins (nodes).
+    Edges : int
+        Total number of edges in the multilayer network.
+    """
     def __init__(self, indexes, target_folder, virus_metadata, NEIGH_ORDER=1):
         self.target_folder = target_folder
         self.indexes = indexes
@@ -97,6 +110,35 @@ class VirusMultiplex():
             
             
 class VirusMultiplex_from_dirlist():
+    """
+    Builds a multilayer PPI network from a list of directories, each containing a layer's edge list.
+
+    Parameters
+    ----------
+    dirlist : list of str
+        List of paths, each containing an "edges.csv" file. The name of the folder will be used as the layer label.
+
+    Attributes
+    ----------
+    g_list : list of graph_tool.Graph
+        List of per-layer PPI networks.
+    g_multi : graph_tool.Graph
+        Edge-colored multilayer network combining all layer edges.
+    node_map : dict
+        Dictionary mapping protein names to node indices.
+    mux_ppi : pandas.DataFrame
+        Combined edge list with layer annotations and node mappings.
+    layer_map : dict
+        Mapping from layer labels to indices.
+    net_description : str
+        Human-readable description of the multilayer structure.
+    Layers : int
+        Number of layers.
+    Nodes : int
+        Number of unique nodes.
+    Edges : int
+        Number of total edges across all layers.
+    """
     def __init__(self, dirlist):
         self.dirlist = dirlist 
         self.mux_ppi = pd.DataFrame()

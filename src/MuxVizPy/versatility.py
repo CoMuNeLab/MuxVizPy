@@ -4,24 +4,81 @@ import scipy.sparse as sps
 import pandas as pd
 from scipy.sparse import find, identity, coo_matrix
 import graph_tool as gt
-from graph_tool import centrality, inference
+from graph_tool import centrality #, inference
 import graph_tool.correlations as gtcorr
 import graph_tool.clustering as gtclust
 
 from MuxVizPy import leading_eigenv_approx
 from MuxVizPy import build
 
-def get_multi_degree(supra, layers, nodes):
+def get_multi_degree(supra: sps.spmatrix, layers: int, nodes: int) -> np.ndarray:
+    """
+    Computes the degree of each physical node by aggregating the supra-adjacency matrix.
+
+    Parameters
+    ----------
+    supra : scipy.sparse.spmatrix
+        Supra-adjacency matrix of the multilayer network.
+    layers : int
+        Number of layers.
+    nodes : int
+        Number of physical nodes.
+
+    Returns
+    -------
+    np.ndarray
+        Degree vector for physical nodes (aggregated across layers).
+    """
     tensor = build.get_node_tensor_from_supra_adjacency(supra, layers, nodes)
     agg_mat = build.get_aggregate_network(tensor, return_mat=True)
     return agg_mat.sum(axis=0)
 
-def get_multi_eigenvector_centrality(supra, layers, nodes):
+def get_multi_eigenvector_centrality(supra: sps.spmatrix, layers: int, nodes: int) -> np.ndarray:
+    """
+    Computes multilayer eigenvector centrality by summing the supra-eigenvector across layers.
+
+    Parameters
+    ----------
+    supra : scipy.sparse matrix
+        Supra-adjacency matrix.
+    layers : int
+        Number of layers.
+    nodes : int
+        Number of physical nodes.
+
+    Returns
+    -------
+    np.ndarray
+        Normalized eigenvector centrality vector for each physical node.
+    """
     leading_eigenvector = sps.linalg.eigs(supra, which="LR", k=1)[1]
     centrality_vector = np.real(abs(leading_eigenvector.reshape([layers,nodes]).sum(axis=0)))
     return centrality_vector/max(centrality_vector)
 
-def get_multi_katz_centrality(supra, layers, nodes, alpha=0, max_iter=1000, tol=1e-6):
+def get_multi_katz_centrality(supra: sps.spmatrix, layers: int, nodes: int, alpha: float = 0, max_iter: int = 1000, tol: float = 1e-6):
+    """
+    Computes multilayer Katz centrality by summing replica contributions.
+
+    Parameters
+    ----------
+    supra : scipy.sparse matrix
+        Supra-adjacency matrix.
+    layers : int
+        Number of layers.
+    nodes : int
+        Number of physical nodes.
+    alpha : float, optional
+        Attenuation factor. If 0, it is estimated from the leading eigenvalue.
+    max_iter : int, optional
+        Maximum iterations for power method.
+    tol : float, optional
+        Convergence tolerance.
+
+    Returns
+    -------
+    np.ndarray
+        Normalized Katz centrality vector for each physical node.
+    """
     leading_eigenv = leading_eigenv_approx.katz_eigenvalue_approx(supra, alpha, max_iter=max_iter, tol=tol)
     katz_centrality_supra_vector = leading_eigenv[1]
     centrality_vector = katz_centrality_supra_vector.reshape([layers,nodes]).sum(axis=0)
@@ -29,7 +86,28 @@ def get_multi_katz_centrality(supra, layers, nodes, alpha=0, max_iter=1000, tol=
     return centrality_vector
 
 
-def get_multi_RW_centrality(supra, layers, nodes, Type = "classical", multilayer=True):
+def get_multi_RW_centrality(supra: sps.spmatrix, layers: int, nodes: int, Type: str = "classical", multilayer: bool = True):
+    """
+    Computes multilayer random walk centrality using eigenvectors of the supra-transition matrix.
+
+    Parameters
+    ----------
+    supra : scipy.sparse matrix
+        Supra-adjacency matrix.
+    layers : int
+        Number of layers.
+    nodes : int
+        Number of physical nodes.
+    Type : str, optional
+        Type of transition: "classical" or "pagerank". Default is "classical".
+    multilayer : bool, optional
+        If True, aggregates replica node scores.
+
+    Returns
+    -------
+    np.ndarray
+        Normalized RW centrality vector for physical nodes.
+    """
     supra_transition = build.build_supra_transition_matrix_from_supra_adjacency_matrix(supra, layers, nodes, Type="classical")
     # we pass the transpose of the transition matrix to get the left eigenvectors
     if Type=="classical":
@@ -51,7 +129,22 @@ def get_multi_RW_centrality(supra, layers, nodes, Type = "classical", multilayer
 
     return np.real(centrality_vector)
     
-def get_multi_RW_centrality_edge_colored(node_tensor, cval=0.15):
+def get_multi_RW_centrality_edge_colored(node_tensor: list[sps.spmatrix], cval: float = 0.15):
+    """
+    Computes multilayer RW centrality over edge-colored supra-adjacency without interlayer links.
+
+    Parameters
+    ----------
+    node_tensor : list of scipy.sparse matrices
+        Adjacency matrices per layer.
+    cval : float, optional
+        Value used in leading eigenvalue approximation (default: 0.15).
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with columns ["phy nodes", "vers"] where "vers" is the normalized score.
+    """
     nodes = node_tensor[0].shape[0]
     layers = len(node_tensor)
     #create a supra adjacency matrix without interlayer connections
@@ -79,7 +172,24 @@ def get_multi_RW_centrality_edge_colored(node_tensor, cval=0.15):
 
     return res_df.groupby("phy nodes").aggregate(sum).reset_index()
 
-def get_multi_hub_centrality(supra, layers, nodes):
+def get_multi_hub_centrality(supra: sps.spmatrix, layers: int, nodes: int):
+    """
+    Computes hub centrality via leading eigenvector of A * A^T.
+
+    Parameters
+    ----------
+    supra : scipy.sparse matrix
+        Supra-adjacency matrix.
+    layers : int
+        Number of layers.
+    nodes : int
+        Number of physical nodes.
+
+    Returns
+    -------
+    np.ndarray
+        Normalized hub centrality vector.
+    """
     #build the A A'
     supra_mat = supra*supra.T
 
@@ -95,7 +205,24 @@ def get_multi_hub_centrality(supra, layers, nodes):
     return centrality_vector
     
     
-def get_multi_auth_centrality(supra, layers, nodes):
+def get_multi_auth_centrality(supra: sps.spmatrix, layers: int, nodes: int):
+    """
+    Computes authority centrality via leading eigenvector of A^T * A.
+
+    Parameters
+    ----------
+    supra : scipy.sparse matrix
+        Supra-adjacency matrix.
+    layers : int
+        Number of layers.
+    nodes : int
+        Number of physical nodes.
+
+    Returns
+    -------
+    np.ndarray
+        Normalized authority centrality vector.
+    """
     #build the A' A
     supra_mat = supra.T*supra
 
@@ -111,7 +238,24 @@ def get_multi_auth_centrality(supra, layers, nodes):
     return centrality_vector
     
     
-def get_multi_Kcore_centrality(supra, layers, nodes):
+def get_multi_Kcore_centrality(supra: sps.spmatrix, layers: int, nodes: int):
+    """
+    Computes multilayer k-core centrality as the minimum core index across all layers.
+
+    Parameters
+    ----------
+    supra : scipy.sparse matrix
+        Supra-adjacency matrix.
+    layers : int
+        Number of layers.
+    nodes : int
+        Number of physical nodes.
+
+    Returns
+    -------
+    np.ndarray
+        Minimum k-core index per node across all layers.
+    """
     #calculate centrality in each layer separately and then get the max per node
     kcore_table = np.zeros([nodes,layers])
     nodes_tensor = build.get_node_tensor_from_supra_adjacency(supra, layers, nodes)

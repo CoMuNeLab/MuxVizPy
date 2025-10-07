@@ -390,21 +390,26 @@ def build_supra_adjacency_matrix_from_extended_edgelist(
     if len(pd.unique(pd.concat([dfEdges["LayerIN"], dfEdges["LayerOUT"]]))) != Layers:
         raise ValueError("Error: expected number of layers does not match the data. Aborting process.")
 
-    edges = pd.DataFrame({"from": dfEdges["NodeIN"]*(dfEdges["LayerIN"]+1),
-                          "to": dfEdges["NodeOUT"]*(dfEdges["LayerOUT"]+1)})
-    edges["weight"]=[1]*len(edges)
+    def supra_idx(node, layer):
+        return layer * Nodes + node
+
+    frm = supra_idx(dfEdges["NodeIN"].to_numpy(),  dfEdges["LayerIN"].to_numpy())
+    to  = supra_idx(dfEdges["NodeOUT"].to_numpy(), dfEdges["LayerOUT"].to_numpy())
+    w = np.ones(len(dfEdges), dtype=float)
     
-    M = sps.coo_matrix((list(edges["weight"]), zip(*list(edges[["from","to"]].to_numpy()))), shape=(Nodes*Layers, Nodes*Layers))
-    
+    order = Layers * Nodes
+    M = sps.coo_matrix((w, (frm, to)), shape=(order, order)).tocsr()    
     
     if isDirected==False:
-        M = M+M.T
+        M = M + M.T
 
     if abs((M - M.T).sum()) > 1e-12 and isDirected == False:
         raise ValueError("WARNING: The input data is directed but isDirected=FALSE, I am symmetrizing by average.")
-        M = (M + M.T) / 2
     
-    return M.T
+    else:
+        M = M
+    
+    return M
 
 
 def create_supra_transition_matrix_virus(

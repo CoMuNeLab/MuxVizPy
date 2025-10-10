@@ -31,7 +31,8 @@ def get_multi_degree(supra: sps.spmatrix, layers: int, nodes: int) -> np.ndarray
     """
     tensor = build.get_node_tensor_from_supra_adjacency(supra, layers, nodes)
     agg_mat = build.get_aggregate_network(tensor, return_mat=True)
-    return agg_mat.sum(axis=0)
+    centrality_vector = np.array(agg_mat.sum(axis=0)).ravel()
+    return centrality_vector
 
 def get_multi_eigenvector_centrality(supra: sps.spmatrix, layers: int, nodes: int) -> np.ndarray:
     """

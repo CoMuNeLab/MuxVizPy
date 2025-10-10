@@ -95,7 +95,7 @@ def katz_eigenvalue_approx(
     ValueError
         If convergence fails or alpha > 1 / lambda_max.
     """
-    _, k1 = leading_eigenv_approx(A, cval=0)
+    k1, _ = leading_eigenv_approx(A, cval=0)
     if alpha==0:
         alpha = (1 / k1) - (1e-5 * (1 / k1))
     else:

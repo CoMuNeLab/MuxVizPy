@@ -87,7 +87,7 @@ def get_multi_katz_centrality(supra: sps.spmatrix, layers: int, nodes: int, alph
     return centrality_vector
 
 
-def get_multi_RW_centrality(supra: sps.spmatrix, layers: int, nodes: int, Type: str = "classical", multilayer: bool = True):
+def get_multi_RW_centrality(supra: sps.spmatrix, layers: int, nodes: int, Type: str = "classical", multilayer: bool = True, alpha: float = 0.15):
     """
     Computes multilayer random walk centrality using eigenvectors of the supra-transition matrix.
 
@@ -103,6 +103,8 @@ def get_multi_RW_centrality(supra: sps.spmatrix, layers: int, nodes: int, Type: 
         Type of transition: "classical" or "pagerank". Default is "classical".
     multilayer : bool, optional
         If True, aggregates replica node scores.
+    alpha : float, optional
+        Damping factor for the power iteration. Default is 0.85.
 
     Returns
     -------
@@ -116,7 +118,7 @@ def get_multi_RW_centrality(supra: sps.spmatrix, layers: int, nodes: int, Type: 
         leading_eigenvector = tmp[1]
         leading_eigenvalue = tmp[0][0]
     elif Type=="pagerank":
-        leading_eigenvalue, leading_eigenvector = leading_eigenv_approx.leading_eigenv_approx(supra_transition)
+        leading_eigenvalue, leading_eigenvector = leading_eigenv_approx.leading_eigenv_approx(supra_transition, alpha=alpha)
 
     if abs(leading_eigenvalue - 1) > 1e-5:
         raise ValueError("GetRWOverallOccupationProbability: ERROR! Expected leading eigenvalue equal to 1, obtained", leading_eigenvalue, ". Aborting process.")

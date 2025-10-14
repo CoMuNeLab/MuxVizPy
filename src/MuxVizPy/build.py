@@ -317,7 +317,6 @@ def build_supra_transition_matrix_from_supra_adjacency_matrix(
     order = layers*nodes
     supra_strength = supra.sum(axis=1).flatten()
     disconnected_nodes = order - len(supra_strength.nonzero()[1])
-    in_layer_disconnected_count = 0
 
     if disconnected_nodes > 0:
         print(" #Trapping nodes (no outgoing-links): ",disconnected_nodes,"\n")
@@ -326,16 +325,8 @@ def build_supra_transition_matrix_from_supra_adjacency_matrix(
         supra_strength[0,np.array(supra_strength>0)[0]] = 1. / supra_strength[0,np.array(supra_strength>0)[0]]
         supra_strength = sps.diags(np.array(supra_strength)[0])
         supra_transition = supra_strength.dot(supra)
-
-    if Type == "pagerank":
-        alpha = 0.85
-    elif Type == "classical":
-        alpha = 1
-    else:
-        # all other types, i.e. diffusive | maxent | physical
-        alpha = 1
     
-    if (disconnected_nodes > 0):
+    if disconnected_nodes > 0:
         ids = np.where(supra_transition.sum(axis=1) == 0)[0]
 
         if Type == "pagerank":
@@ -346,10 +337,9 @@ def build_supra_transition_matrix_from_supra_adjacency_matrix(
             not_ids = np.delete(np.arange(len(supra_transition)), ids)
             supra_transition[0,not_ids] = alpha * supra_transition[0,not_ids] + (1-alpha)/order
             """
-            #supra_transition.setdiag(1)
+            supra_transition[:,ids] = 1./order
         if Type == "classical":
             print(" #Using self-loops for isolated nodes\n")
-            #supra_transition[:,ids] = 1./order
             supra_transition[ids,ids]=[1]*len(ids)
     else:
         supra_transition = supra_transition# + sps.coo_matrix(np.zeros(supra_transition.shape))*(1-alpha)/order

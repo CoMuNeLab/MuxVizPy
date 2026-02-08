@@ -552,7 +552,7 @@ def compute_multi_authority_centrality(
     np.ndarray
         Max-normalized authority centrality per physical node, shape (n,).
     """
-    AAT = adj.T.dot(adj)
+    AAT = adj.T.dot(adj).astype(np.float64)
     AAT.data += eps
     eigen_search_failed = True
     count_eigen_attempts = 0

@@ -271,7 +271,8 @@ def compute_eigenvector_centrality(adj: sps.csr_matrix, n: int, l: int, logger: 
 
 def compute_katz_centrality(
     adj: sps.csr_matrix, n: int, l: int,
-    approx: bool = False, approx_args: Optional[dict] = None,
+    approx: bool = False,
+    approx_args: Optional[dict] = None,
     logger: Optional[logging.Logger] = None,
 ) -> np.ndarray:
     """
@@ -288,10 +289,6 @@ def compute_katz_centrality(
         Number of nodes.
     l : int
         Number of layers.
-    approx : bool
-        If True, use approximate power-iteration approach.
-    approx_args : dict, optional
-        Keys: "alpha", "maxiter", "tol" for the approximate path.
     logger : logging.Logger, optional
 
     Returns
@@ -299,47 +296,40 @@ def compute_katz_centrality(
     np.ndarray
         Max-normalized Katz centrality per physical node, shape (n,).
     """
+    EPS = 1e-5
+    if approx and approx_args is None:
+        approx_args = {"maxiter": 1000, "tol": 1e-6}
+
     NL = n * l
     if not sps.isspmatrix(adj):
         raise TypeError("adj must be a SciPy sparse matrix")
     if adj.shape != (NL, NL):
         raise ValueError(f"Adjacency matrix shape {adj.shape} != ({NL}, {NL})")
 
+    lam, _ = get_largest_eigenvalue(adj, logger=logger)
+
+    spectral_radius = float(np.abs(lam)) 
+    alpha = (1-EPS) / spectral_radius
+
     if approx:
-        lam, _ = get_largest_eigenvalue(adj, logger=logger)
-        k1 = float(np.abs(lam))
-        if approx_args["alpha"] == 0:
-            approx_args["alpha"] = (1 / k1) - (1e-5 * (1 / k1))
-        else:
-            if approx_args["alpha"] >= 1 / k1:
-                print("Warning: alpha >= 1 / lambda_max — instability possible")
         x = np.random.randn(adj.shape[0])
-        for i in range(approx_args["maxiter"]):
-            x_new = approx_args["alpha"] * adj @ x + np.ones(adj.shape[0])
+        for i in range(approx_args.get("maxiter", 1000)):
+            x_new = alpha * adj @ x + np.ones(adj.shape[0])
+            # Compute the change in x and check for convergence
             delta_x = np.linalg.norm(x_new - x)
-            if delta_x < approx_args["tol"]:
+            if delta_x < approx_args.get("tol", 1e-6):
+                if logger and logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("Reached convergence in Katz power iteration after %d iterations with delta %.3e", i + 1, delta_x)
                 break
+            # Update x for the next iteration
             x = x_new
-        alpha = approx_args["alpha"]
     else:
-        AT = adj.transpose().tocsc()
-        try:
-            lam, _ = get_largest_eigenvalue(AT, logger=logger)
-        except Exception as e:
-            if logger:
-                logger.warning("eigs failed (%s); falling back to spectral norm bound", e)
-            svals = sps.linalg.svds(adj, k=1, return_singular_vectors=False)
-            lam = float(svals[0]) if np.size(svals) else 0.0
-
-        if lam == 0.0:
-            return np.zeros(n, dtype=np.float32)
-
-        alpha = 0.99999 / abs(lam)
-
         I = sps.eye(NL, format="csc", dtype=np.float64)
         Aop = I - alpha * adj.tocsc()
         b = np.ones(NL, dtype=np.float64)
         x = sps.linalg.spsolve(Aop, b)
+
+    eigenvalue = (x.T @ adj @ x) / (x.T @ x) # Rayleigh quotient for the Katz operator
 
     X = np.reshape(x, (n, l), order="F")
     katz_centrality = X.sum(axis=1)
@@ -349,7 +339,7 @@ def compute_katz_centrality(
     if logger and logger.isEnabledFor(logging.DEBUG):
         logger.debug("Katz: alpha=%.6g, lambda_max=%.6g, min/mean/max=%.4g/%.4g/%.4g",
                      alpha, lam, katz.min(), katz.mean(), katz.max())
-    return katz
+    return katz, eigenvalue
 
 
 def compute_multi_rw_centrality(
@@ -665,11 +655,13 @@ def get_multi_katz_centrality(
         Normalized Katz centrality vector for each physical node.
     """
     if backend == "hornet":
-        return compute_katz_centrality(supra, nodes, layers, logger=logger)
+        katz, _ = compute_katz_centrality(supra, nodes, layers, logger=logger)
+        return katz
     leading_eigenv = leading_eigenv_approx.katz_eigenvalue_approx(supra, alpha, max_iter=max_iter, tol=tol)
     katz_centrality_supra_vector = leading_eigenv[1]
     centrality_vector = katz_centrality_supra_vector.reshape([layers,nodes]).sum(axis=0)
     centrality_vector=centrality_vector/centrality_vector.max()
+
     return centrality_vector
 
 

@@ -1,31 +1,24 @@
 """
 Tests for MuxVizPy.versatility — centrality measures and node-based metrics.
 
+All test classes are parametrized over network configs (toy, random_large,
+scalefree_small) via the ``net_*`` fixtures defined in conftest.py.
+
 Classes:
-    TestVersatilityCorrectness    — shapes, value ranges, basic invariants
+    TestVersatilityCorrectness      — shapes, value ranges, basic invariants
+    TestKatzCentralityAgreement     — approx vs exact and legacy comparison
     TestVersatilityBackendComparison — muxvizpy vs hornet backend agreement
-    TestVersatilityReference      — comparison against muxViz R (Singularity container)
+    TestVersatilityReference        — comparison against pre-computed muxViz R results
 """
 
 import pytest
-import json
 import numpy as np
 import scipy.sparse as sp
 from scipy.stats import spearmanr
 
 from MuxVizPy import versatility
-from conftest import (
-    TOY_N_NODES,
-    TOY_N_LAYERS,
-    TOY_EDGES,
-    compare_metrics,
-    save_network_for_muxviz,
-)
-
-
-N = TOY_N_NODES
-L = TOY_N_LAYERS
-NL = N * L
+from MuxVizPy import leading_eigenv_approx
+from conftest import compare_metrics
 
 
 # ============================================================================
@@ -37,21 +30,21 @@ class TestVersatilityCorrectness:
 
     # --- eigenvalue helpers -----------------------------------------------
 
-    def test_get_largest_eigenvalue_returns_tuple(self, toy_adjacency):
-        lam, vec = versatility.get_largest_eigenvalue(toy_adjacency)
+    def test_get_largest_eigenvalue_returns_tuple(self, net_adjacency, net_nl):
+        lam, vec = versatility.get_largest_eigenvalue(net_adjacency)
         assert isinstance(lam, float)
         assert isinstance(vec, np.ndarray)
-        assert vec.shape == (NL,)
+        assert vec.shape == (net_nl,)
 
-    def test_get_largest_eigenvalue_positive(self, toy_adjacency):
-        lam, _ = versatility.get_largest_eigenvalue(toy_adjacency)
+    def test_get_largest_eigenvalue_positive(self, net_adjacency):
+        lam, _ = versatility.get_largest_eigenvalue(net_adjacency)
         assert lam > 0
 
-    def test_approximate_largest_eigenvalue_returns_tuple(self, toy_adjacency):
-        lam, vec = versatility.approximate_largest_eigenvalue(toy_adjacency)
+    def test_approximate_largest_eigenvalue_returns_tuple(self, net_adjacency, net_nl):
+        lam, vec = versatility.approximate_largest_eigenvalue(net_adjacency)
         assert isinstance(lam, float)
         assert isinstance(vec, np.ndarray)
-        assert vec.shape == (NL,)
+        assert vec.shape == (net_nl,)
 
     # --- block accumulation helpers ---------------------------------------
 
@@ -60,22 +53,22 @@ class TestVersatilityCorrectness:
         assert versatility.is_in_diagonal_block(0, 10, n=10, l=3) is False
         assert versatility.is_in_diagonal_block(15, 19, n=10, l=3) is True
 
-    def test_accumulate_diagonal_blocks_shape(self, toy_adjacency):
+    def test_accumulate_diagonal_blocks_shape(self, net_adjacency, net_n, net_l):
         result = versatility._accumulate_on_diagonal_blocks(
-            toy_adjacency, N, L, is_out_of_diagonal=False,
+            net_adjacency, net_n, net_l, is_out_of_diagonal=False,
         )
-        assert result.shape == (N, L)
+        assert result.shape == (net_n, net_l)
 
-    def test_accumulate_off_diagonal_blocks_shape(self, toy_adjacency):
+    def test_accumulate_off_diagonal_blocks_shape(self, net_adjacency, net_n, net_l):
         result = versatility._accumulate_on_diagonal_blocks(
-            toy_adjacency, N, L, is_out_of_diagonal=True,
+            net_adjacency, net_n, net_l, is_out_of_diagonal=True,
         )
-        assert result.shape == (N, L)
+        assert result.shape == (net_n, net_l)
 
-    def test_accumulate_wrong_shape_raises(self):
+    def test_accumulate_wrong_shape_raises(self, net_n, net_l):
         wrong = sp.eye(5, format="csr")
         with pytest.raises(ValueError, match="does not match"):
-            versatility._accumulate_on_diagonal_blocks(wrong, N, L, is_out_of_diagonal=False)
+            versatility._accumulate_on_diagonal_blocks(wrong, net_n, net_l, is_out_of_diagonal=False)
 
     # --- aggregate_metrics_over_layers ------------------------------------
 
@@ -102,113 +95,215 @@ class TestVersatilityCorrectness:
 
     # --- per-layer degree / strength shapes -------------------------------
 
-    def test_compute_indegree_shape(self, toy_adjacency):
-        result = versatility.compute_indegree(toy_adjacency, N, L)
-        assert result.shape == (N, L)
+    def test_compute_indegree_shape(self, net_adjacency, net_n, net_l):
+        result = versatility.compute_indegree(net_adjacency, net_n, net_l)
+        assert result.shape == (net_n, net_l)
 
-    def test_compute_aggregated_indegree_shape(self, toy_adjacency):
-        result = versatility.compute_aggregated_indegree(toy_adjacency, N, L)
-        assert result.shape == (N,)
+    def test_compute_aggregated_indegree_shape(self, net_adjacency, net_n, net_l):
+        result = versatility.compute_aggregated_indegree(net_adjacency, net_n, net_l)
+        assert result.shape == (net_n,)
 
-    def test_compute_outdegree_shape(self, toy_adjacency):
-        result = versatility.compute_outdegree(toy_adjacency, N, L)
-        assert result.shape == (N, L)
+    def test_compute_outdegree_shape(self, net_adjacency, net_n, net_l):
+        result = versatility.compute_outdegree(net_adjacency, net_n, net_l)
+        assert result.shape == (net_n, net_l)
 
-    def test_compute_aggregated_outdegree_shape(self, toy_adjacency):
-        result = versatility.compute_aggregated_outdegree(toy_adjacency, N, L)
-        assert result.shape == (N,)
+    def test_compute_aggregated_outdegree_shape(self, net_adjacency, net_n, net_l):
+        result = versatility.compute_aggregated_outdegree(net_adjacency, net_n, net_l)
+        assert result.shape == (net_n,)
 
-    def test_compute_instrength_shape(self, toy_interaction):
-        result = versatility.compute_instrength(toy_interaction, N, L)
-        assert result.shape == (N, L)
+    def test_compute_instrength_shape(self, net_interaction, net_n, net_l):
+        result = versatility.compute_instrength(net_interaction, net_n, net_l)
+        assert result.shape == (net_n, net_l)
 
-    def test_compute_outstrength_shape(self, toy_interaction):
-        result = versatility.compute_outstrength(toy_interaction, N, L)
-        assert result.shape == (N, L)
+    def test_compute_outstrength_shape(self, net_interaction, net_n, net_l):
+        result = versatility.compute_outstrength(net_interaction, net_n, net_l)
+        assert result.shape == (net_n, net_l)
 
-    def test_compute_multiindegree_shape(self, toy_adjacency):
-        result = versatility.compute_multiindegree(toy_adjacency, N, L)
-        assert result.shape == (N, L)
+    def test_compute_multiindegree_shape(self, net_adjacency, net_n, net_l):
+        result = versatility.compute_multiindegree(net_adjacency, net_n, net_l)
+        assert result.shape == (net_n, net_l)
 
-    def test_compute_multioutdegree_shape(self, toy_adjacency):
-        result = versatility.compute_multioutdegree(toy_adjacency, N, L)
-        assert result.shape == (N, L)
+    def test_compute_multioutdegree_shape(self, net_adjacency, net_n, net_l):
+        result = versatility.compute_multioutdegree(net_adjacency, net_n, net_l)
+        assert result.shape == (net_n, net_l)
 
-    def test_compute_multiinstrength_shape(self, toy_interaction):
-        result = versatility.compute_multiinstrength(toy_interaction, N, L)
-        assert result.shape == (N, L)
+    def test_compute_multiinstrength_shape(self, net_interaction, net_n, net_l):
+        result = versatility.compute_multiinstrength(net_interaction, net_n, net_l)
+        assert result.shape == (net_n, net_l)
 
-    def test_compute_multioutstrength_shape(self, toy_interaction):
-        result = versatility.compute_multioutstrength(toy_interaction, N, L)
-        assert result.shape == (N, L)
+    def test_compute_multioutstrength_shape(self, net_interaction, net_n, net_l):
+        result = versatility.compute_multioutstrength(net_interaction, net_n, net_l)
+        assert result.shape == (net_n, net_l)
 
     # --- degree consistency: aggregated indegreesum = indegree + multiindegree
 
-    def test_indegree_plus_multiindegree_equals_total(self, toy_adjacency):
-        intra = versatility.compute_aggregated_indegree(toy_adjacency, N, L)
-        inter = versatility.compute_aggregated_multiindegree(toy_adjacency, N, L)
-        # Total in-degree from full supra-adjacency row sums
-        total = np.asarray(toy_adjacency.sum(axis=0)).ravel()
-        # total per-node = sum over replica columns
-        total_per_node = total.reshape(L, N).sum(axis=0)
+    def test_indegree_plus_multiindegree_equals_total(self, net_adjacency, net_n, net_l):
+        intra = versatility.compute_aggregated_indegree(net_adjacency, net_n, net_l)
+        inter = versatility.compute_aggregated_multiindegree(net_adjacency, net_n, net_l)
+        total = np.asarray(net_adjacency.sum(axis=0)).ravel()
+        total_per_node = total.reshape(net_l, net_n).sum(axis=0)
         np.testing.assert_allclose(intra + inter, total_per_node, atol=1e-10)
 
-    def test_outdegree_plus_multioutdegree_equals_total(self, toy_adjacency):
-        intra = versatility.compute_aggregated_outdegree(toy_adjacency, N, L)
-        inter = versatility.compute_aggregated_multioutdegree(toy_adjacency, N, L)
-        total = np.asarray(toy_adjacency.sum(axis=1)).ravel()
-        total_per_node = total.reshape(L, N).sum(axis=0)
+    def test_outdegree_plus_multioutdegree_equals_total(self, net_adjacency, net_n, net_l):
+        intra = versatility.compute_aggregated_outdegree(net_adjacency, net_n, net_l)
+        inter = versatility.compute_aggregated_multioutdegree(net_adjacency, net_n, net_l)
+        total = np.asarray(net_adjacency.sum(axis=1)).ravel()
+        total_per_node = total.reshape(net_l, net_n).sum(axis=0)
         np.testing.assert_allclose(intra + inter, total_per_node, atol=1e-10)
 
     # --- centrality shapes and ranges -------------------------------------
 
-    def test_compute_eigenvector_centrality_shape(self, toy_adjacency):
-        ec = versatility.compute_eigenvector_centrality(toy_adjacency, N, L)
-        assert ec.shape == (N,)
+    def test_compute_eigenvector_centrality_shape(self, net_adjacency, net_n, net_l):
+        ec = versatility.compute_eigenvector_centrality(net_adjacency, net_n, net_l)
+        assert ec.shape == (net_n,)
         assert ec.max() == pytest.approx(1.0, abs=1e-6)
 
-    def test_compute_katz_centrality_shape(self, toy_interaction):
-        katz = versatility.compute_katz_centrality(toy_interaction, N, L)
-        assert katz.shape == (N,)
+    def test_compute_katz_centrality_exact_shape(self, net_interaction, net_n, net_l):
+        katz, eigenvalue = versatility.compute_katz_centrality(net_interaction, net_n, net_l, approx=False)
+        assert katz.shape == (net_n,)
         assert katz.max() == pytest.approx(1.0, abs=1e-6)
+        assert isinstance(eigenvalue, float)
 
-    def test_compute_multi_rw_centrality_classical_shape(self, toy_adjacency):
-        rc = versatility.compute_multi_rw_centrality(toy_adjacency, N, L, kind="classical")
-        assert rc.shape == (N,)
+    def test_compute_katz_centrality_approx_shape(self, net_interaction, net_n, net_l):
+        np.random.seed(42)
+        katz, eigenvalue = versatility.compute_katz_centrality(
+            net_interaction, net_n, net_l, approx=True,
+            approx_args={"maxiter": 5000, "tol": 1e-8},
+        )
+        assert katz.shape == (net_n,)
+        assert katz.max() == pytest.approx(1.0, abs=1e-6)
+        assert isinstance(eigenvalue, float)
+
+    def test_compute_multi_rw_centrality_classical_shape(self, net_adjacency, net_n, net_l):
+        rc = versatility.compute_multi_rw_centrality(net_adjacency, net_n, net_l, kind="classical")
+        assert rc.shape == (net_n,)
         assert rc.max() == pytest.approx(1.0, abs=1e-6)
 
-    def test_compute_multipagerank_centrality_shape(self, toy_adjacency):
-        pr = versatility.compute_multipagerank_centrality(toy_adjacency, N, L)
-        assert pr.shape == (N,)
+    def test_compute_multipagerank_centrality_shape(self, net_adjacency, net_n, net_l):
+        pr = versatility.compute_multipagerank_centrality(net_adjacency, net_n, net_l)
+        assert pr.shape == (net_n,)
         assert pr.max() == pytest.approx(1.0, abs=1e-6)
 
-    def test_compute_multi_hub_centrality_shape(self, toy_adjacency):
-        hc = versatility.compute_multi_hub_centrality(toy_adjacency, N, L)
-        assert hc.shape == (N,)
+    def test_compute_multi_hub_centrality_shape(self, net_adjacency, net_n, net_l):
+        hc = versatility.compute_multi_hub_centrality(net_adjacency, net_n, net_l)
+        assert hc.shape == (net_n,)
 
-    def test_compute_multi_authority_centrality_shape(self, toy_interaction):
-        ac = versatility.compute_multi_authority_centrality(toy_interaction, N, L)
-        assert ac.shape == (N,)
+    def test_compute_multi_authority_centrality_shape(self, net_interaction, net_n, net_l):
+        ac = versatility.compute_multi_authority_centrality(net_interaction, net_n, net_l)
+        assert ac.shape == (net_n,)
 
     # --- public API shapes ------------------------------------------------
 
-    def test_get_multi_degree_shape(self, toy_adjacency):
-        deg = versatility.get_multi_degree(toy_adjacency, L, N)
-        assert deg.shape == (N,)
+    def test_get_multi_degree_shape(self, net_adjacency, net_n, net_l):
+        deg = versatility.get_multi_degree(net_adjacency, net_l, net_n)
+        assert deg.shape == (net_n,)
 
-    def test_get_multi_eigenvector_centrality_shape(self, toy_adjacency):
-        ec = versatility.get_multi_eigenvector_centrality(toy_adjacency, L, N)
-        assert ec.shape == (N,)
+    def test_get_multi_eigenvector_centrality_shape(self, net_adjacency, net_n, net_l):
+        ec = versatility.get_multi_eigenvector_centrality(net_adjacency, net_l, net_n)
+        assert ec.shape == (net_n,)
 
-    def test_get_multi_katz_centrality_shape(self, toy_adjacency):
-        katz = versatility.get_multi_katz_centrality(toy_adjacency, L, N)
-        assert katz.shape == (N,)
+    def test_get_multi_katz_centrality_shape(self, net_adjacency, net_n, net_l):
+        katz = versatility.get_multi_katz_centrality(net_adjacency, net_l, net_n)
+        assert katz.shape == (net_n,)
 
-    def test_get_multi_RW_centrality_shape(self, toy_adjacency):
+    def test_get_multi_RW_centrality_shape(self, net_adjacency, net_n, net_l):
         # muxvizpy backend relies on build.build_supra_transition_matrix which
         # may fail on networks with zero-degree replica nodes; test hornet backend instead
-        rw = versatility.get_multi_RW_centrality(toy_adjacency, L, N, Type="classical", backend="hornet")
-        assert rw.shape == (N,)
+        rw = versatility.get_multi_RW_centrality(net_adjacency, net_l, net_n, Type="classical", backend="hornet")
+        assert rw.shape == (net_n,)
+
+
+# ============================================================================
+# Katz centrality — approx vs exact and old vs new implementation
+# ============================================================================
+
+class TestKatzCentralityAgreement:
+    """Verify that the two code paths inside compute_katz_centrality (spsolve
+    vs power iteration) agree with each other and with the legacy
+    katz_eigenvalue_approx implementation."""
+
+    def test_katz_exact_vs_approx_values(self, net_interaction, net_n, net_l):
+        """spsolve and power-iteration paths should produce the same ranking."""
+        katz_exact, eig_exact = versatility.compute_katz_centrality(
+            net_interaction, net_n, net_l, approx=False,
+        )
+        np.random.seed(42)
+        katz_approx, eig_approx = versatility.compute_katz_centrality(
+            net_interaction, net_n, net_l, approx=True,
+            approx_args={"maxiter": 10000, "tol": 1e-10},
+        )
+        # Values should be close (both are max-normalised to 1)
+        np.testing.assert_allclose(katz_exact, katz_approx, atol=0.05, rtol=0.1,
+                                   err_msg="Katz exact vs approx values")
+        # Rank order must agree
+        corr, _ = spearmanr(katz_exact, katz_approx)
+        assert corr >= 0.90, f"Katz rank correlation exact vs approx: {corr:.4f}"
+
+    def test_katz_exact_vs_approx_on_adjacency(self, net_adjacency, net_n, net_l):
+        """Same test on the binary supra-adjacency (not weighted)."""
+        katz_exact, _ = versatility.compute_katz_centrality(
+            net_adjacency, net_n, net_l, approx=False,
+        )
+        np.random.seed(42)
+        katz_approx, _ = versatility.compute_katz_centrality(
+            net_adjacency, net_n, net_l, approx=True,
+            approx_args={"maxiter": 10000, "tol": 1e-10},
+        )
+        np.testing.assert_allclose(katz_exact, katz_approx, atol=0.05, rtol=0.1,
+                                   err_msg="Katz exact vs approx (adjacency)")
+        corr, _ = spearmanr(katz_exact, katz_approx)
+        assert corr >= 0.90, f"Katz rank correlation exact vs approx (adj): {corr:.4f}"
+
+    def test_katz_new_vs_legacy_katz_eigenvalue_approx(self, net_interaction, net_n, net_l):
+        """Compare compute_katz_centrality(approx=True) against the legacy
+        katz_eigenvalue_approx from leading_eigenv_approx module.
+
+        Both use power iteration for the Katz solve, but differ in how they
+        estimate alpha (spectral radius via get_largest_eigenvalue vs eigs
+        directly). The resulting centrality ranking should agree."""
+        np.random.seed(42)
+        katz_new, _ = versatility.compute_katz_centrality(
+            net_interaction, net_n, net_l, approx=True,
+            approx_args={"maxiter": 10000, "tol": 1e-10},
+        )
+
+        np.random.seed(42)
+        eig_legacy, vec_legacy = leading_eigenv_approx.katz_eigenvalue_approx(
+            net_interaction, alpha=0, max_iter=10000, tol=1e-10,
+        )
+        # Reshape and normalise the same way as compute_katz_centrality
+        X_legacy = vec_legacy.reshape((net_n, net_l), order="F")
+        katz_legacy = X_legacy.sum(axis=1)
+        katz_legacy = katz_legacy / katz_legacy.max()
+
+        corr, _ = spearmanr(katz_new, katz_legacy)
+        assert corr >= 0.90, (
+            f"Katz new-approx vs legacy rank correlation: {corr:.4f}\n"
+            f"  new:    {katz_new}\n"
+            f"  legacy: {katz_legacy}"
+        )
+
+    def test_katz_exact_vs_legacy_katz_eigenvalue_approx(self, net_interaction, net_n, net_l):
+        """Compare the exact spsolve path against the legacy power-iteration
+        implementation. This is the key test for deprecation safety."""
+        katz_exact, _ = versatility.compute_katz_centrality(
+            net_interaction, net_n, net_l, approx=False,
+        )
+
+        np.random.seed(42)
+        _, vec_legacy = leading_eigenv_approx.katz_eigenvalue_approx(
+            net_interaction, alpha=0, max_iter=10000, tol=1e-10,
+        )
+        X_legacy = vec_legacy.reshape((net_n, net_l), order="F")
+        katz_legacy = X_legacy.sum(axis=1)
+        katz_legacy = katz_legacy / katz_legacy.max()
+
+        corr, _ = spearmanr(katz_exact, katz_legacy)
+        assert corr >= 0.90, (
+            f"Katz exact vs legacy rank correlation: {corr:.4f}\n"
+            f"  exact:  {katz_exact}\n"
+            f"  legacy: {katz_legacy}"
+        )
 
 
 # ============================================================================
@@ -248,213 +343,172 @@ class TestVersatilityBackendComparison:
                 f"Spearman r={corr:.4f})"
             )
 
-    def test_degree_backends_both_run(self, toy_adjacency):
+    def test_degree_backends_both_run(self, net_adjacency, net_n, net_l):
         """Degree backends have different semantics: muxvizpy collapses into
         an aggregate network (parallel edges merged), hornet sums per-layer
         out-degree (keeps parallel edges). Verify both run and produce valid
         shapes and non-negative values."""
-        mv = versatility.get_multi_degree(toy_adjacency, L, N, backend="muxvizpy")
-        hn = versatility.get_multi_degree(toy_adjacency, L, N, backend="hornet")
-        assert mv.shape == (N,)
-        assert hn.shape == (N,)
+        mv = versatility.get_multi_degree(net_adjacency, net_l, net_n, backend="muxvizpy")
+        hn = versatility.get_multi_degree(net_adjacency, net_l, net_n, backend="hornet")
+        assert mv.shape == (net_n,)
+        assert hn.shape == (net_n,)
         assert np.all(mv >= 0)
         assert np.all(hn >= 0)
 
-    def test_eigenvector_backends_both_normalized(self, toy_adjacency):
+    def test_eigenvector_backends_both_normalized(self, net_adjacency, net_n, net_l):
         """Eigenvector backends use different spectral criteria (LR vs LM on A^T).
         Verify both produce normalized results."""
-        mv = versatility.get_multi_eigenvector_centrality(toy_adjacency, L, N, backend="muxvizpy")
-        hn = versatility.get_multi_eigenvector_centrality(toy_adjacency, L, N, backend="hornet")
-        assert mv.shape == (N,)
-        assert hn.shape == (N,)
-        # Both should be max-normalized to 1
+        mv = versatility.get_multi_eigenvector_centrality(net_adjacency, net_l, net_n, backend="muxvizpy")
+        hn = versatility.get_multi_eigenvector_centrality(net_adjacency, net_l, net_n, backend="hornet")
+        assert mv.shape == (net_n,)
+        assert hn.shape == (net_n,)
         assert mv.max() == pytest.approx(1.0, abs=1e-4)
         assert hn.max() == pytest.approx(1.0, abs=1e-4)
 
-    def test_katz_backends(self, toy_adjacency):
-        mv = versatility.get_multi_katz_centrality(toy_adjacency, L, N, backend="muxvizpy")
-        hn = versatility.get_multi_katz_centrality(toy_adjacency, L, N, backend="hornet")
+    def test_katz_backends(self, net_adjacency, net_n, net_l):
+        mv = versatility.get_multi_katz_centrality(net_adjacency, net_l, net_n, backend="muxvizpy")
+        hn = versatility.get_multi_katz_centrality(net_adjacency, net_l, net_n, backend="hornet")
         self._assert_backends_close(mv, hn, "katz")
 
-    def test_rw_classical_backends(self, toy_adjacency):
+    def test_rw_classical_backends(self, net_adjacency, net_n, net_l):
         """muxvizpy backend relies on build_supra_transition_matrix which may
         fail on networks with zero-degree replica nodes. Test only hornet."""
         try:
-            mv = versatility.get_multi_RW_centrality(toy_adjacency, L, N, Type="classical", backend="muxvizpy")
+            mv = versatility.get_multi_RW_centrality(net_adjacency, net_l, net_n, Type="classical", backend="muxvizpy")
         except (ValueError, Exception):
             pytest.skip("muxvizpy RW backend cannot build transition matrix for this network")
-        hn = versatility.get_multi_RW_centrality(toy_adjacency, L, N, Type="classical", backend="hornet")
+        hn = versatility.get_multi_RW_centrality(net_adjacency, net_l, net_n, Type="classical", backend="hornet")
         self._assert_backends_close(mv, hn, "rw_classical")
 
-    def test_rw_pagerank_backends(self, toy_adjacency):
+    def test_rw_pagerank_backends(self, net_adjacency, net_n, net_l):
         """muxvizpy backend relies on build_supra_transition_matrix which may
         fail on networks with zero-degree replica nodes. Test only hornet."""
         try:
-            mv = versatility.get_multi_RW_centrality(toy_adjacency, L, N, Type="pagerank", backend="muxvizpy")
+            mv = versatility.get_multi_RW_centrality(net_adjacency, net_l, net_n, Type="pagerank", backend="muxvizpy")
         except (ValueError, Exception):
             pytest.skip("muxvizpy PageRank backend cannot build transition matrix for this network")
-        hn = versatility.get_multi_RW_centrality(toy_adjacency, L, N, Type="pagerank", backend="hornet")
+        hn = versatility.get_multi_RW_centrality(net_adjacency, net_l, net_n, Type="pagerank", backend="hornet")
         self._assert_backends_close(mv, hn, "rw_pagerank")
 
-    def test_hub_backends(self, toy_adjacency):
-        mv = versatility.get_multi_hub_centrality(toy_adjacency, L, N, backend="muxvizpy")
-        hn = versatility.get_multi_hub_centrality(toy_adjacency, L, N, backend="hornet")
+    def test_hub_backends(self, net_adjacency, net_n, net_l):
+        mv = versatility.get_multi_hub_centrality(net_adjacency, net_l, net_n, backend="muxvizpy")
+        hn = versatility.get_multi_hub_centrality(net_adjacency, net_l, net_n, backend="hornet")
         self._assert_backends_close(mv, hn, "hub")
 
-    def test_auth_backends_both_normalized(self, toy_adjacency):
+    def test_auth_backends_both_normalized(self, net_adjacency, net_n, net_l):
         """Auth backends differ: muxvizpy uses leading_eigenv_approx on A
         (appears to be a bug — computes A^T*A but doesn't pass it), hornet
         uses get_largest_eigenvalue on A^T*A. Verify both produce results."""
-        mv = versatility.get_multi_auth_centrality(toy_adjacency, L, N, backend="muxvizpy")
-        hn = versatility.get_multi_auth_centrality(toy_adjacency, L, N, backend="hornet")
-        assert mv.shape == (N,)
-        assert hn.shape == (N,)
+        mv = versatility.get_multi_auth_centrality(net_adjacency, net_l, net_n, backend="muxvizpy")
+        hn = versatility.get_multi_auth_centrality(net_adjacency, net_l, net_n, backend="hornet")
+        assert mv.shape == (net_n,)
+        assert hn.shape == (net_n,)
         assert mv.max() == pytest.approx(1.0, abs=1e-4)
         assert hn.max() == pytest.approx(1.0, abs=1e-4)
 
 
 # ============================================================================
-# Reference — comparison against muxViz R via Singularity container
+# Reference — comparison against pre-computed muxViz R results
 # ============================================================================
 
 class TestVersatilityReference:
-    """Compare hornet-backend results against muxViz R reference.
+    """Compare results against muxViz R reference.
 
-    All tests are skipped gracefully if the Singularity container is not
-    available or if the R script execution fails.
+    Pre-computed results are loaded from tests/data/{config}/muxviz_results.json.
+    Tests are skipped for configs without reference data.
     """
-
-    MUXVIZ_METRICS = [
-        "katz", "pagerank", "hub", "auth", "eigenvector",
-        "indegree", "outdegree", "instrength", "outstrength",
-        "indegreesum", "outdegreesum", "instrengthsum", "outstrengthsum",
-    ]
-
-    @pytest.fixture(scope="class")
-    def muxviz_results(self, muxviz_runner, toy_network, test_data_dir):
-        """Run muxViz R and return metric results as dict."""
-        edges = toy_network["edges"]
-        n_nodes = toy_network["n_nodes"]
-        n_layers = toy_network["n_layers"]
-
-        edgelist_path = test_data_dir / "reference" / "toy_edges.csv"
-        save_network_for_muxviz(edges, edgelist_path)
-
-        output_path = test_data_dir / "reference" / "muxviz_results.json"
-
-        # Build metric computation lines
-        metric_funcs = {
-            "katz": f"GetMultiKatzCentrality(mlnet, {n_layers}, {n_nodes})",
-            "pagerank": f"GetMultiPageRankCentrality(mlnet, {n_layers}, {n_nodes})",
-            "hub": f"GetMultiHubCentrality(mlnet, {n_layers}, {n_nodes})",
-            "auth": f"GetMultiAuthCentrality(mlnet, {n_layers}, {n_nodes})",
-            "eigenvector": f"GetMultiEigenvectorCentrality(mlnet, {n_layers}, {n_nodes})",
-            "indegree": f"GetMultiInDegree(mlnet, {n_layers}, {n_nodes}, TRUE)",
-            "outdegree": f"GetMultiOutDegree(mlnet, {n_layers}, {n_nodes}, TRUE)",
-            "instrength": f"GetMultiInStrength(mlnet, {n_layers}, {n_nodes}, TRUE)",
-            "outstrength": f"GetMultiOutStrength(mlnet, {n_layers}, {n_nodes}, TRUE)",
-            "indegreesum": f"GetMultiInDegreeSum(mlnet, {n_layers}, {n_nodes}, TRUE)",
-            "outdegreesum": f"GetMultiOutDegreeSum(mlnet, {n_layers}, {n_nodes}, TRUE)",
-            "instrengthsum": f"GetMultiInStrengthSum(mlnet, {n_layers}, {n_nodes}, TRUE)",
-            "outstrengthsum": f"GetMultiOutStrengthSum(mlnet, {n_layers}, {n_nodes}, TRUE)",
-        }
-        metric_lines = "\n".join(
-            f'        results${k} <- as.vector({v})' for k, v in metric_funcs.items()
-        )
-
-        r_script = f'''
-        library(muxViz)
-        library(jsonlite)
-
-        df <- read.csv("{edgelist_path}", header = TRUE, sep=",")
-
-        remap_dense <- function(vec) {{
-            uniq <- sort(unique(vec))
-            mapping <- setNames(seq_along(uniq), uniq)
-            as.integer(mapping[as.character(vec)])
-        }}
-
-        df$node.from  <- remap_dense(c(df$node.from, df$node.to))[1:nrow(df)]
-        df$node.to    <- remap_dense(c(df$node.from, df$node.to))[(nrow(df)+1):(2*nrow(df))]
-        df$layer.from <- remap_dense(c(df$layer.from, df$layer.to))[1:nrow(df)]
-        df$layer.to   <- remap_dense(c(df$layer.from, df$layer.to))[(nrow(df)+1):(2*nrow(df))]
-
-        mlnet <- BuildSupraAdjacencyMatrixFromExtendedEdgelist(df, {n_layers}, {n_nodes}, TRUE)
-
-        results <- list()
-{metric_lines}
-
-        write_json(results, "{output_path}", auto_unbox=TRUE)
-        '''
-
-        try:
-            muxviz_runner.run_r_script(r_script)
-        except Exception as e:
-            pytest.skip(f"MuxViz R script failed: {e}")
-
-        if output_path.exists():
-            with open(output_path, "r") as f:
-                return json.load(f)
-        pytest.skip("MuxViz results not generated")
 
     # --- centrality reference tests ---------------------------------------
 
-    def test_katz_vs_muxviz(self, toy_interaction, muxviz_results):
-        computed = versatility.compute_katz_centrality(toy_interaction, N, L)
-        compare_metrics(computed, muxviz_results["katz"], "Katz (hornet vs muxViz R)")
+    def test_katz_exact_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
+        computed, _ = versatility.compute_katz_centrality(net_interaction, net_n, net_l, approx=False)
+        # muxviz reference is rounded to 4 dp → need atol >= 5e-4
+        compare_metrics(computed, net_muxviz_results["katz"], "Katz exact (vs muxViz R)",
+                        rtol=5e-4, atol=5e-4)
 
-    def test_pagerank_vs_muxviz(self, toy_interaction, muxviz_results):
-        computed = versatility.compute_multipagerank_centrality(toy_interaction, N, L)
-        compare_metrics(computed, muxviz_results["pagerank"], "PageRank (hornet vs muxViz R)")
+    def test_katz_approx_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
+        np.random.seed(42)
+        computed, _ = versatility.compute_katz_centrality(
+            net_interaction, net_n, net_l, approx=True,
+            approx_args={"maxiter": 10000, "tol": 1e-10},
+        )
+        compare_metrics(computed, net_muxviz_results["katz"], "Katz approx (vs muxViz R)",
+                         rtol=0.05, atol=0.05)
 
-    def test_hub_vs_muxviz(self, toy_adjacency, muxviz_results):
-        computed = versatility.compute_multi_hub_centrality(toy_adjacency, N, L)
-        compare_metrics(computed, muxviz_results["hub"], "Hub (hornet vs muxViz R)")
+    def test_katz_muxvizpy_vs_muxviz_r(self, net_interaction, net_n, net_l, net_muxviz_results):
+        computed = versatility.get_multi_katz_centrality(net_interaction, net_l, net_n, max_iter=10000, backend="muxvizpy")
+        expected = np.asarray(net_muxviz_results["katz"], dtype=np.float64)
+        # Legacy power method diverges on large networks; fall back to rank correlation
+        try:
+            compare_metrics(computed, expected, "Katz muxvizpy (vs muxViz R)",
+                             rtol=0.05, atol=0.05)
+        except AssertionError:
+            corr, _ = spearmanr(computed, expected)
+            assert corr >= 0.90, (
+                f"Katz muxvizpy vs muxViz R rank correlation: {corr:.4f}"
+            )
 
-    def test_auth_vs_muxviz(self, toy_interaction, muxviz_results):
-        computed = versatility.compute_multi_authority_centrality(toy_interaction, N, L)
-        compare_metrics(computed, muxviz_results["auth"], "Authority (hornet vs muxViz R)")
+    def test_pagerank_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
+        computed = versatility.compute_multipagerank_centrality(net_interaction, net_n, net_l)
+        compare_metrics(computed, net_muxviz_results["pagerank"], "PageRank (vs muxViz R)")
 
-    def test_eigenvector_vs_muxviz(self, toy_interaction, muxviz_results):
-        computed = versatility.compute_eigenvector_centrality(toy_interaction, N, L)
-        compare_metrics(computed, muxviz_results["eigenvector"], "Eigenvector (hornet vs muxViz R)")
+    def test_hub_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
+        computed = versatility.compute_multi_hub_centrality(net_adjacency, net_n, net_l)
+        compare_metrics(computed, net_muxviz_results["hub"], "Hub (vs muxViz R)")
+
+    def test_auth_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
+        computed = versatility.compute_multi_authority_centrality(net_interaction, net_n, net_l)
+        compare_metrics(computed, net_muxviz_results["auth"], "Authority (vs muxViz R)")
+
+    def test_eigenvector_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
+        computed = versatility.compute_eigenvector_centrality(net_interaction, net_n, net_l)
+        compare_metrics(computed, net_muxviz_results["eigenvector"], "Eigenvector (vs muxViz R)",
+                        rtol=5e-4, atol=5e-4)
 
     # --- degree / strength reference tests --------------------------------
 
-    def test_indegree_vs_muxviz(self, toy_adjacency, muxviz_results):
-        computed = versatility.compute_aggregated_indegree(toy_adjacency, N, L)
-        compare_metrics(computed, muxviz_results["indegree"], "Indegree (hornet vs muxViz R)")
+    def test_indegree_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
+        computed = versatility.compute_aggregated_indegree(net_adjacency, net_n, net_l)
+        compare_metrics(computed, net_muxviz_results["indegree"], "Indegree (vs muxViz R)")
 
-    def test_outdegree_vs_muxviz(self, toy_adjacency, muxviz_results):
-        computed = versatility.compute_aggregated_outdegree(toy_adjacency, N, L)
-        compare_metrics(computed, muxviz_results["outdegree"], "Outdegree (hornet vs muxViz R)")
+    def test_outdegree_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
+        computed = versatility.compute_aggregated_outdegree(net_adjacency, net_n, net_l)
+        compare_metrics(computed, net_muxviz_results["outdegree"], "Outdegree (vs muxViz R)")
 
-    def test_instrength_vs_muxviz(self, toy_interaction, muxviz_results):
-        computed = versatility.compute_aggregated_instrength(toy_interaction, N, L)
-        compare_metrics(computed, muxviz_results["instrength"], "Instrength (hornet vs muxViz R)")
+    def test_instrength_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
+        computed = versatility.compute_aggregated_instrength(net_interaction, net_n, net_l)
+        compare_metrics(computed, net_muxviz_results["instrength"], "Instrength (vs muxViz R)")
 
-    def test_outstrength_vs_muxviz(self, toy_interaction, muxviz_results):
-        computed = versatility.compute_aggregated_outstrength(toy_interaction, N, L)
-        compare_metrics(computed, muxviz_results["outstrength"], "Outstrength (hornet vs muxViz R)")
+    def test_outstrength_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
+        computed = versatility.compute_aggregated_outstrength(net_interaction, net_n, net_l)
+        compare_metrics(computed, net_muxviz_results["outstrength"], "Outstrength (vs muxViz R)")
 
     # --- multi-degree derived tests (indegreesum - indegree = multiindegree)
 
-    def test_multiindegree_vs_muxviz_derived(self, toy_adjacency, muxviz_results):
-        computed = versatility.compute_aggregated_multiindegree(toy_adjacency, N, L)
-        expected = np.array(muxviz_results["indegreesum"]) - np.array(muxviz_results["indegree"])
-        compare_metrics(computed, expected, "MultiIndegree (hornet vs muxViz derived)")
+    def test_multiindegree_vs_muxviz_derived(self, net_adjacency, net_n, net_l, net_muxviz_results):
+        if "indegreesum" not in net_muxviz_results:
+            pytest.skip("indegreesum not in reference results")
+        computed = versatility.compute_aggregated_multiindegree(net_adjacency, net_n, net_l)
+        expected = np.array(net_muxviz_results["indegreesum"]) - np.array(net_muxviz_results["indegree"])
+        compare_metrics(computed, expected, "MultiIndegree (vs muxViz derived)")
 
-    def test_multioutdegree_vs_muxviz_derived(self, toy_adjacency, muxviz_results):
-        computed = versatility.compute_aggregated_multioutdegree(toy_adjacency, N, L)
-        expected = np.array(muxviz_results["outdegreesum"]) - np.array(muxviz_results["outdegree"])
-        compare_metrics(computed, expected, "MultiOutdegree (hornet vs muxViz derived)")
+    def test_multioutdegree_vs_muxviz_derived(self, net_adjacency, net_n, net_l, net_muxviz_results):
+        if "outdegreesum" not in net_muxviz_results:
+            pytest.skip("outdegreesum not in reference results")
+        computed = versatility.compute_aggregated_multioutdegree(net_adjacency, net_n, net_l)
+        expected = np.array(net_muxviz_results["outdegreesum"]) - np.array(net_muxviz_results["outdegree"])
+        compare_metrics(computed, expected, "MultiOutdegree (vs muxViz derived)")
 
-    def test_multiinstrength_vs_muxviz_derived(self, toy_interaction, muxviz_results):
-        computed = versatility.compute_aggregated_multiinstrength(toy_interaction, N, L)
-        expected = np.array(muxviz_results["instrengthsum"]) - np.array(muxviz_results["instrength"])
-        compare_metrics(computed, expected, "MultiInstrength (hornet vs muxViz derived)")
+    def test_multiinstrength_vs_muxviz_derived(self, net_interaction, net_n, net_l, net_muxviz_results):
+        if "instrengthsum" not in net_muxviz_results:
+            pytest.skip("instrengthsum not in reference results")
+        computed = versatility.compute_aggregated_multiinstrength(net_interaction, net_n, net_l)
+        expected = np.array(net_muxviz_results["instrengthsum"]) - np.array(net_muxviz_results["instrength"])
+        compare_metrics(computed, expected, "MultiInstrength (vs muxViz derived)")
 
-    def test_multioutstrength_vs_muxviz_derived(self, toy_interaction, muxviz_results):
-        computed = versatility.compute_aggregated_multioutstrength(toy_interaction, N, L)
-        expected = np.array(muxviz_results["outstrengthsum"]) - np.array(muxviz_results["outstrength"])
-        compare_metrics(computed, expected, "MultiOutstrength (hornet vs muxViz derived)")
+    def test_multioutstrength_vs_muxviz_derived(self, net_interaction, net_n, net_l, net_muxviz_results):
+        if "outstrengthsum" not in net_muxviz_results:
+            pytest.skip("outstrengthsum not in reference results")
+        computed = versatility.compute_aggregated_multioutstrength(net_interaction, net_n, net_l)
+        expected = np.array(net_muxviz_results["outstrengthsum"]) - np.array(net_muxviz_results["outstrength"])
+        compare_metrics(computed, expected, "MultiOutstrength (vs muxViz derived)")

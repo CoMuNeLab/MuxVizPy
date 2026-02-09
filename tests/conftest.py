@@ -351,3 +351,102 @@ def toy_interaction(toy_network):
     )
     tensor = parsing.build_tensor_from_dataframe(df)
     return parsing.build_supra_interaction_matrix_from_tensor(tensor)
+
+
+# ---------------------------------------------------------------------------
+# Parametrized network configs for cross-network testing
+# ---------------------------------------------------------------------------
+
+NETWORK_CONFIGS = {
+    "toy": {
+        "n_nodes": TOY_N_NODES,
+        "n_layers": TOY_N_LAYERS,
+    },
+    "random_large": {
+        "n_nodes": 1000,
+        "n_layers": 4,
+        "data_dir": "random_large",
+    },
+    "scalefree_small": {
+        "n_nodes": 10,
+        "n_layers": 2,
+        "data_dir": "scalefree_small",
+    },
+}
+
+TESTS_DATA_DIR = Path(__file__).parent / "data"
+
+
+@pytest.fixture(scope="session", params=list(NETWORK_CONFIGS.keys()))
+def network_config(request):
+    """Parametrized network configuration name."""
+    return request.param
+
+
+@pytest.fixture(scope="session")
+def net_info(network_config):
+    """Build adjacency/interaction matrices for a parametrized network config."""
+    config = NETWORK_CONFIGS[network_config]
+    n_nodes = config["n_nodes"]
+    n_layers = config["n_layers"]
+
+    if "data_dir" in config:
+        df = pl.read_csv(str(TESTS_DATA_DIR / config["data_dir"] / "edges.csv"))
+    else:
+        df = pl.DataFrame(
+            TOY_EDGES,
+            schema=["node.from", "layer.from", "node.to", "layer.to", "weight"],
+            orient="row",
+        )
+
+    tensor = parsing.build_tensor_from_dataframe(df)
+    adj = parsing.build_supra_adjacency_matrix_from_tensor(tensor)
+    interaction = parsing.build_supra_interaction_matrix_from_tensor(tensor)
+
+    return {
+        "adjacency": adj,
+        "interaction": interaction,
+        "n_nodes": n_nodes,
+        "n_layers": n_layers,
+        "config_name": network_config,
+    }
+
+
+@pytest.fixture(scope="session")
+def net_adjacency(net_info):
+    """Supra-adjacency matrix for the current network config."""
+    return net_info["adjacency"]
+
+
+@pytest.fixture(scope="session")
+def net_interaction(net_info):
+    """Supra-interaction matrix for the current network config."""
+    return net_info["interaction"]
+
+
+@pytest.fixture(scope="session")
+def net_n(net_info):
+    """Number of physical nodes for the current network config."""
+    return net_info["n_nodes"]
+
+
+@pytest.fixture(scope="session")
+def net_l(net_info):
+    """Number of layers for the current network config."""
+    return net_info["n_layers"]
+
+
+@pytest.fixture(scope="session")
+def net_nl(net_info):
+    """NL = n_nodes * n_layers for the current network config."""
+    return net_info["n_nodes"] * net_info["n_layers"]
+
+
+@pytest.fixture(scope="session")
+def net_muxviz_results(network_config):
+    """Load pre-computed muxViz R reference results. Skips if unavailable."""
+    results_path = TESTS_DATA_DIR / network_config / "muxviz_results.json"
+    if not results_path.exists():
+        pytest.skip(f"No muxViz reference results for '{network_config}'")
+    with open(results_path) as f:
+        return json.load(f)

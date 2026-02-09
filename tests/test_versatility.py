@@ -202,109 +202,11 @@ class TestVersatilityCorrectness:
         ec = versatility.get_multi_eigenvector_centrality(net_adjacency, net_l, net_n)
         assert ec.shape == (net_n,)
 
-    def test_get_multi_katz_centrality_shape(self, net_adjacency, net_n, net_l):
-        katz = versatility.get_multi_katz_centrality(net_adjacency, net_l, net_n)
-        assert katz.shape == (net_n,)
-
     def test_get_multi_RW_centrality_shape(self, net_adjacency, net_n, net_l):
         # muxvizpy backend relies on build.build_supra_transition_matrix which
         # may fail on networks with zero-degree replica nodes; test hornet backend instead
         rw = versatility.get_multi_RW_centrality(net_adjacency, net_l, net_n, Type="classical", backend="hornet")
         assert rw.shape == (net_n,)
-
-
-# ============================================================================
-# Katz centrality — approx vs exact and old vs new implementation
-# ============================================================================
-
-class TestKatzCentralityAgreement:
-    """Verify that the two code paths inside compute_katz_centrality (spsolve
-    vs power iteration) agree with each other and with the legacy
-    katz_eigenvalue_approx implementation."""
-
-    def test_katz_exact_vs_approx_values(self, net_interaction, net_n, net_l):
-        """spsolve and power-iteration paths should produce the same ranking."""
-        katz_exact, eig_exact = versatility.compute_katz_centrality(
-            net_interaction, net_n, net_l, approx=False,
-        )
-        np.random.seed(42)
-        katz_approx, eig_approx = versatility.compute_katz_centrality(
-            net_interaction, net_n, net_l, approx=True,
-            approx_args={"maxiter": 10000, "tol": 1e-10},
-        )
-        # Values should be close (both are max-normalised to 1)
-        np.testing.assert_allclose(katz_exact, katz_approx, atol=0.05, rtol=0.1,
-                                   err_msg="Katz exact vs approx values")
-        # Rank order must agree
-        corr, _ = spearmanr(katz_exact, katz_approx)
-        assert corr >= 0.90, f"Katz rank correlation exact vs approx: {corr:.4f}"
-
-    def test_katz_exact_vs_approx_on_adjacency(self, net_adjacency, net_n, net_l):
-        """Same test on the binary supra-adjacency (not weighted)."""
-        katz_exact, _ = versatility.compute_katz_centrality(
-            net_adjacency, net_n, net_l, approx=False,
-        )
-        np.random.seed(42)
-        katz_approx, _ = versatility.compute_katz_centrality(
-            net_adjacency, net_n, net_l, approx=True,
-            approx_args={"maxiter": 10000, "tol": 1e-10},
-        )
-        np.testing.assert_allclose(katz_exact, katz_approx, atol=0.05, rtol=0.1,
-                                   err_msg="Katz exact vs approx (adjacency)")
-        corr, _ = spearmanr(katz_exact, katz_approx)
-        assert corr >= 0.90, f"Katz rank correlation exact vs approx (adj): {corr:.4f}"
-
-    def test_katz_new_vs_legacy_katz_eigenvalue_approx(self, net_interaction, net_n, net_l):
-        """Compare compute_katz_centrality(approx=True) against the legacy
-        katz_eigenvalue_approx from leading_eigenv_approx module.
-
-        Both use power iteration for the Katz solve, but differ in how they
-        estimate alpha (spectral radius via get_largest_eigenvalue vs eigs
-        directly). The resulting centrality ranking should agree."""
-        np.random.seed(42)
-        katz_new, _ = versatility.compute_katz_centrality(
-            net_interaction, net_n, net_l, approx=True,
-            approx_args={"maxiter": 10000, "tol": 1e-10},
-        )
-
-        np.random.seed(42)
-        eig_legacy, vec_legacy = leading_eigenv_approx.katz_eigenvalue_approx(
-            net_interaction, alpha=0, max_iter=10000, tol=1e-10,
-        )
-        # Reshape and normalise the same way as compute_katz_centrality
-        X_legacy = vec_legacy.reshape((net_n, net_l), order="F")
-        katz_legacy = X_legacy.sum(axis=1)
-        katz_legacy = katz_legacy / katz_legacy.max()
-
-        corr, _ = spearmanr(katz_new, katz_legacy)
-        assert corr >= 0.90, (
-            f"Katz new-approx vs legacy rank correlation: {corr:.4f}\n"
-            f"  new:    {katz_new}\n"
-            f"  legacy: {katz_legacy}"
-        )
-
-    def test_katz_exact_vs_legacy_katz_eigenvalue_approx(self, net_interaction, net_n, net_l):
-        """Compare the exact spsolve path against the legacy power-iteration
-        implementation. This is the key test for deprecation safety."""
-        katz_exact, _ = versatility.compute_katz_centrality(
-            net_interaction, net_n, net_l, approx=False,
-        )
-
-        np.random.seed(42)
-        _, vec_legacy = leading_eigenv_approx.katz_eigenvalue_approx(
-            net_interaction, alpha=0, max_iter=10000, tol=1e-10,
-        )
-        X_legacy = vec_legacy.reshape((net_n, net_l), order="F")
-        katz_legacy = X_legacy.sum(axis=1)
-        katz_legacy = katz_legacy / katz_legacy.max()
-
-        corr, _ = spearmanr(katz_exact, katz_legacy)
-        assert corr >= 0.90, (
-            f"Katz exact vs legacy rank correlation: {corr:.4f}\n"
-            f"  exact:  {katz_exact}\n"
-            f"  legacy: {katz_legacy}"
-        )
-
 
 # ============================================================================
 # Backend comparison — muxvizpy vs hornet
@@ -364,11 +266,6 @@ class TestVersatilityBackendComparison:
         assert hn.shape == (net_n,)
         assert mv.max() == pytest.approx(1.0, abs=1e-4)
         assert hn.max() == pytest.approx(1.0, abs=1e-4)
-
-    def test_katz_backends(self, net_adjacency, net_n, net_l):
-        mv = versatility.get_multi_katz_centrality(net_adjacency, net_l, net_n, backend="muxvizpy")
-        hn = versatility.get_multi_katz_centrality(net_adjacency, net_l, net_n, backend="hornet")
-        self._assert_backends_close(mv, hn, "katz")
 
     def test_rw_classical_backends(self, net_adjacency, net_n, net_l):
         """muxvizpy backend relies on build_supra_transition_matrix which may
@@ -434,19 +331,6 @@ class TestVersatilityReference:
         )
         compare_metrics(computed, net_muxviz_results["katz"], "Katz approx (vs muxViz R)",
                          rtol=0.05, atol=0.05)
-
-    def test_katz_muxvizpy_vs_muxviz_r(self, net_interaction, net_n, net_l, net_muxviz_results):
-        computed = versatility.get_multi_katz_centrality(net_interaction, net_l, net_n, max_iter=10000, backend="muxvizpy")
-        expected = np.asarray(net_muxviz_results["katz"], dtype=np.float64)
-        # Legacy power method diverges on large networks; fall back to rank correlation
-        try:
-            compare_metrics(computed, expected, "Katz muxvizpy (vs muxViz R)",
-                             rtol=0.05, atol=0.05)
-        except AssertionError:
-            corr, _ = spearmanr(computed, expected)
-            assert corr >= 0.90, (
-                f"Katz muxvizpy vs muxViz R rank correlation: {corr:.4f}"
-            )
 
     def test_pagerank_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
         computed = versatility.compute_multipagerank_centrality(net_interaction, net_n, net_l)

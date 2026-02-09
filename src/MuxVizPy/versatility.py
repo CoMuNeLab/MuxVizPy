@@ -623,48 +623,6 @@ def get_multi_eigenvector_centrality(
     centrality_vector = np.real(abs(leading_eigenvector.reshape([layers,nodes]).sum(axis=0)))
     return centrality_vector/max(centrality_vector)
 
-def get_multi_katz_centrality(
-    supra: sps.spmatrix, layers: int, nodes: int,
-    alpha: float = 0, max_iter: int = 1000, tol: float = 1e-6,
-    backend: str = "muxvizpy", logger: Optional[logging.Logger] = None,
-):
-    """
-    Computes multilayer Katz centrality by summing replica contributions.
-
-    Parameters
-    ----------
-    supra : scipy.sparse matrix
-        Supra-adjacency matrix.
-    layers : int
-        Number of layers.
-    nodes : int
-        Number of physical nodes.
-    alpha : float, optional
-        Attenuation factor. If 0, it is estimated from the leading eigenvalue.
-    max_iter : int, optional
-        Maximum iterations for power method (muxvizpy backend).
-    tol : float, optional
-        Convergence tolerance (muxvizpy backend).
-    backend : str
-        "muxvizpy" (power iteration via katz_eigenvalue_approx) or "hornet" (sparse solve).
-    logger : logging.Logger, optional
-
-    Returns
-    -------
-    np.ndarray
-        Normalized Katz centrality vector for each physical node.
-    """
-    if backend == "hornet":
-        katz, _ = compute_katz_centrality(supra, nodes, layers, logger=logger)
-        return katz
-    leading_eigenv = leading_eigenv_approx.katz_eigenvalue_approx(supra, alpha, max_iter=max_iter, tol=tol)
-    katz_centrality_supra_vector = leading_eigenv[1]
-    centrality_vector = katz_centrality_supra_vector.reshape([layers,nodes]).sum(axis=0)
-    centrality_vector=centrality_vector/centrality_vector.max()
-
-    return centrality_vector
-
-
 def get_multi_RW_centrality(
     supra: sps.spmatrix, layers: int, nodes: int,
     Type: str = "classical", multilayer: bool = True, alpha: float = 0.15,

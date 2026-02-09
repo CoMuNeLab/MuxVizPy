@@ -287,23 +287,6 @@ class TestVersatilityBackendComparison:
         hn = versatility.get_multi_RW_centrality(net_adjacency, net_l, net_n, Type="pagerank", backend="hornet")
         self._assert_backends_close(mv, hn, "rw_pagerank")
 
-    def test_hub_backends(self, net_adjacency, net_n, net_l):
-        mv = versatility.get_multi_hub_centrality(net_adjacency, net_l, net_n, backend="muxvizpy")
-        hn = versatility.get_multi_hub_centrality(net_adjacency, net_l, net_n, backend="hornet")
-        self._assert_backends_close(mv, hn, "hub")
-
-    def test_auth_backends_both_normalized(self, net_adjacency, net_n, net_l):
-        """Auth backends differ: muxvizpy uses leading_eigenv_approx on A
-        (appears to be a bug — computes A^T*A but doesn't pass it), hornet
-        uses get_largest_eigenvalue on A^T*A. Verify both produce results."""
-        mv = versatility.get_multi_auth_centrality(net_adjacency, net_l, net_n, backend="muxvizpy")
-        hn = versatility.get_multi_auth_centrality(net_adjacency, net_l, net_n, backend="hornet")
-        assert mv.shape == (net_n,)
-        assert hn.shape == (net_n,)
-        assert mv.max() == pytest.approx(1.0, abs=1e-4)
-        assert hn.max() == pytest.approx(1.0, abs=1e-4)
-
-
 # ============================================================================
 # Reference — comparison against pre-computed muxViz R results
 # ============================================================================

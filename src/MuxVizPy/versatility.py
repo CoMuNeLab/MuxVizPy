@@ -278,8 +278,10 @@ def compute_katz_centrality(
     """
     Compute multi-layer Katz centrality.
 
-    Solves (I - a * A) x = 1 with a = 0.99999 / |lambda_max(A)|, then
+    Solves (I - a * A) x = 1 with a = (1-EPS) / spectral_radius(A), then
     reshapes x to (n, l) in column-major order and sums across layers.
+
+    Solves by direct sparse linear solve or by power iteration if approx=True.
 
     Parameters
     ----------
@@ -492,14 +494,16 @@ def compute_multi_hub_centrality(
         Max-normalized hub centrality per physical node, shape (n,).
     """
     AA = adj.dot(adj.T)
+    if approx and approx_args is None:
+        approx_args = {"maxiter": 1000, "tol": 1e-6}
     eigen_search_failed = True
     count_eigen_attempts = 0
     while eigen_search_failed and count_eigen_attempts < max_attempts:
-        if approx and approx_args:
+        if approx:
             if logger:
                 logger.debug("Using approximate largest eigenvalue computation for hub centrality")
             eigenval, eigenvec = approximate_largest_eigenvalue(
-                adj, cval=approx_args.get("cval", 1.0), maxiter=approx_args.get("maxiter", 1000))
+                AA, cval=approx_args.get("cval", 1.0), maxiter=approx_args.get("maxiter", 1000))
         else:
             eigenval, eigenvec = get_largest_eigenvalue(AA, logger=logger)
         hc = eigenvec.reshape((l, n)).sum(axis=0)
@@ -518,10 +522,13 @@ def compute_multi_hub_centrality(
 def compute_multi_authority_centrality(
     adj: sps.csr_matrix, n: int, l: int,
     eps: float = 1e-16, max_attempts: int = 10,
+    approx: bool = False, approx_args: Optional[dict] = None,
     logger: Optional[logging.Logger] = None,
 ) -> np.ndarray:
     """
     Compute multi-layer authority centrality using the dominant eigenvector of A^T * A.
+
+    Solves by scipy.sparse.linalg.eigs (exact) or by power iteration if approx=True.
 
     Parameters
     ----------
@@ -535,6 +542,10 @@ def compute_multi_authority_centrality(
         Small value added for Perron-Frobenius uniqueness.
     max_attempts : int
         Max eigenvalue search retries.
+    approx : bool
+        Use approximate eigenvalue computation via power iteration.
+    approx_args : dict, optional
+        Arguments for approximate computation (keys: cval, maxiter, tol).
     logger : logging.Logger, optional
 
     Returns
@@ -544,10 +555,19 @@ def compute_multi_authority_centrality(
     """
     AAT = adj.T.dot(adj).astype(np.float64)
     AAT.data += eps
+    if approx and approx_args is None:
+        approx_args = {"maxiter": 1000, "tol": 1e-6}
+
     eigen_search_failed = True
     count_eigen_attempts = 0
     while eigen_search_failed and count_eigen_attempts < max_attempts:
-        eigenval, eigenvec = get_largest_eigenvalue(AAT, logger=logger)
+        if approx:
+            if logger:
+                logger.debug("Using approximate largest eigenvalue computation for authority centrality")
+            eigenval, eigenvec = approximate_largest_eigenvalue(
+                AAT, cval=approx_args.get("cval", 1.0), maxiter=approx_args.get("maxiter", 1000))
+        else:
+            eigenval, eigenvec = get_largest_eigenvalue(AAT, logger=logger)
         X = np.reshape(eigenvec, (n, l), order="F")
         authority_centrality = X.sum(axis=1)
         maxv = authority_centrality.max() if authority_centrality.size else 0.0
@@ -720,88 +740,6 @@ def get_multi_RW_centrality_edge_colored(node_tensor: list[sps.spmatrix], cval: 
     res_df = pd.DataFrame({"phy nodes": nonzero_idx-((nonzero_idx//nodes)*nodes), "vers": pr_v/max(pr_v)})
 
     return res_df.groupby("phy nodes").aggregate(sum).reset_index()
-
-def get_multi_hub_centrality(
-    supra: sps.spmatrix, layers: int, nodes: int,
-    backend: str = "muxvizpy", logger: Optional[logging.Logger] = None,
-) -> np.ndarray:
-    """
-    Computes hub centrality via leading eigenvector of A * A^T.
-
-    Parameters
-    ----------
-    supra : scipy.sparse matrix
-        Supra-adjacency matrix.
-    layers : int
-        Number of layers.
-    nodes : int
-        Number of physical nodes.
-    backend : str
-        "muxvizpy" or "hornet".
-    logger : logging.Logger, optional
-
-    Returns
-    -------
-    np.ndarray
-        Normalized hub centrality vector.
-    """
-    if backend == "hornet":
-        return compute_multi_hub_centrality(supra, nodes, layers, logger=logger)
-    #build the A A'
-    supra_mat = supra*supra.T
-
-    #we pass the matrix to get the right eigenvectors
-    #to deal with the possible degeneracy of the leading eigenvalue, we add an eps to the matrix
-    #this ensures that we can apply the Perron-Frobenius theorem to say that there is a unique
-    #leading eigenvector. Here we add eps, a very very small number (<1e-8, generally)
-    leading_eigenvector = leading_eigenv_approx.leading_eigenv_approx(supra, cval=1e-16)[1]
-
-    centrality_vector = leading_eigenvector.reshape([layers,nodes]).sum(axis=0)
-    centrality_vector = centrality_vector / max(centrality_vector)
-
-    return centrality_vector
-
-
-def get_multi_auth_centrality(
-    supra: sps.spmatrix, layers: int, nodes: int,
-    backend: str = "muxvizpy", logger: Optional[logging.Logger] = None,
-) -> np.ndarray:
-    """
-    Computes authority centrality via leading eigenvector of A^T * A.
-
-    Parameters
-    ----------
-    supra : scipy.sparse matrix
-        Supra-adjacency matrix.
-    layers : int
-        Number of layers.
-    nodes : int
-        Number of physical nodes.
-    backend : str
-        "muxvizpy" or "hornet".
-    logger : logging.Logger, optional
-
-    Returns
-    -------
-    np.ndarray
-        Normalized authority centrality vector.
-    """
-    if backend == "hornet":
-        return compute_multi_authority_centrality(supra, nodes, layers, logger=logger)
-    #build the A' A
-    supra_mat = supra.T*supra
-
-    #we pass the matrix to get the right eigenvectors
-    #to deal with the possible degeneracy of the leading eigenvalue, we add an eps to the matrix
-    #this ensures that we can apply the Perron-Frobenius theorem to say that there is a unique
-    #leading eigenvector. Here we add eps, a very very small number (<1e-8, generally)
-    leading_eigenvector = leading_eigenv_approx.leading_eigenv_approx(supra, cval=1e-16)[1]
-
-    centrality_vector = leading_eigenvector.reshape([layers,nodes]).sum(axis=0)
-    centrality_vector = centrality_vector / max(centrality_vector)
-
-    return centrality_vector
-
 
 def get_multi_Kcore_centrality(supra: sps.spmatrix, layers: int, nodes: int):
     """

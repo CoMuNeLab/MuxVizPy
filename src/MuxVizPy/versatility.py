@@ -226,6 +226,43 @@ def compute_aggregated_multioutstrength(adj: sps.csr_matrix, n: int, l: int, met
     return aggregate_metrics_over_layers(compute_multioutstrength(adj, n, l, logger=logger), method=method)
 
 
+def compute_multi_degree(
+    adj: sps.csr_matrix, n: int, l: int,
+    is_directed: bool = True,
+    logger: Optional[logging.Logger] = None,
+) -> np.ndarray:
+    """
+    Compute multi-layer degree following muxViz R semantics.
+
+    Binarized in-degree + out-degree on intra-layer (diagonal) blocks,
+    aggregated across layers.  For undirected networks the sum is halved
+    to avoid double-counting.
+
+    Parameters
+    ----------
+    adj : scipy.sparse matrix
+        Supra-adjacency matrix of shape (n*l, n*l).
+    n : int
+        Number of nodes.
+    l : int
+        Number of layers.
+    is_directed : bool
+        If True, returns in + out. If False, returns (in + out) / 2.
+    logger : logging.Logger, optional
+
+    Returns
+    -------
+    np.ndarray
+        Multi-degree per physical node, shape (n,).
+    """
+    indeg = compute_aggregated_indegree(adj, n, l, method="sum", logger=logger)
+    outdeg = compute_aggregated_outdegree(adj, n, l, method="sum", logger=logger)
+    if is_directed:
+        return indeg + outdeg
+    else:
+        return (indeg + outdeg) / 2.0
+
+
 # ---------------------------------------------------------------------------
 # Centrality implementations (integrated from hornet/node_based)
 # ---------------------------------------------------------------------------
@@ -470,6 +507,11 @@ def compute_multi_hub_centrality(
     """
     Compute multi-layer hub centrality using the dominant eigenvector of A * A^T.
 
+    N.B. The retry loop (max_attempts) exists because scipy.sparse.linalg.eigs
+    (ARPACK) uses random initialization and can return degenerate eigenvectors
+    on small or very sparse supra-matrices. The approximate path (power
+    iteration with eps perturbation) is deterministic and does not need retries.
+
     Parameters
     ----------
     adj : scipy.sparse matrix
@@ -481,7 +523,7 @@ def compute_multi_hub_centrality(
     eps : float
         Small value added for Perron-Frobenius uniqueness.
     max_attempts : int
-        Max eigenvalue search retries.
+        Max eigenvalue search retries (relevant for exact path only).
     approx : bool
         Use approximate eigenvalue computation.
     approx_args : dict, optional
@@ -503,7 +545,9 @@ def compute_multi_hub_centrality(
             if logger:
                 logger.debug("Using approximate largest eigenvalue computation for hub centrality")
             eigenval, eigenvec = approximate_largest_eigenvalue(
-                AA, cval=approx_args.get("cval", 1.0), maxiter=approx_args.get("maxiter", 1000))
+                AA, alpha=1.0, cval=approx_args.get("cval", eps),
+                maxiter=approx_args.get("maxiter", 1000),
+                tol=approx_args.get("tol", 1e-6))
         else:
             eigenval, eigenvec = get_largest_eigenvalue(AA, logger=logger)
         hc = eigenvec.reshape((l, n)).sum(axis=0)
@@ -530,6 +574,11 @@ def compute_multi_authority_centrality(
 
     Solves by scipy.sparse.linalg.eigs (exact) or by power iteration if approx=True.
 
+    N.B. The retry loop (max_attempts) exists because scipy.sparse.linalg.eigs
+    (ARPACK) uses random initialization and can return degenerate eigenvectors
+    on small or very sparse supra-matrices. The approximate path (power
+    iteration with eps perturbation) is deterministic and does not need retries.
+
     Parameters
     ----------
     adj : scipy.sparse matrix
@@ -541,7 +590,7 @@ def compute_multi_authority_centrality(
     eps : float
         Small value added for Perron-Frobenius uniqueness.
     max_attempts : int
-        Max eigenvalue search retries.
+        Max eigenvalue search retries (relevant for exact path only).
     approx : bool
         Use approximate eigenvalue computation via power iteration.
     approx_args : dict, optional
@@ -565,7 +614,9 @@ def compute_multi_authority_centrality(
             if logger:
                 logger.debug("Using approximate largest eigenvalue computation for authority centrality")
             eigenval, eigenvec = approximate_largest_eigenvalue(
-                AAT, cval=approx_args.get("cval", 1.0), maxiter=approx_args.get("maxiter", 1000))
+                AAT, alpha=1.0, cval=approx_args.get("cval", eps),
+                maxiter=approx_args.get("maxiter", 1000),
+                tol=approx_args.get("tol", 1e-6))
         else:
             eigenval, eigenvec = get_largest_eigenvalue(AAT, logger=logger)
         X = np.reshape(eigenvec, (n, l), order="F")
@@ -586,7 +637,11 @@ def compute_multi_authority_centrality(
 # Public API with backend dispatch
 # ---------------------------------------------------------------------------
 
-def get_multi_degree(supra: sps.spmatrix, layers: int, nodes: int, backend: str = "muxvizpy") -> np.ndarray:
+def get_multi_degree(
+    supra: sps.spmatrix, layers: int, nodes: int,
+    is_directed: bool = True, backend: str = "muxvizpy",
+    logger: Optional[logging.Logger] = None,
+) -> np.ndarray:
     """
     Computes the degree of each physical node by aggregating the supra-adjacency matrix.
 
@@ -598,8 +653,12 @@ def get_multi_degree(supra: sps.spmatrix, layers: int, nodes: int, backend: str 
         Number of layers.
     nodes : int
         Number of physical nodes.
+    is_directed : bool
+        If True, returns in + out degree. If False, returns (in + out) / 2.
     backend : str
-        "muxvizpy" (aggregate network) or "hornet" (block accumulation on out-degree).
+        "muxvizpy" (aggregate network column sum) or "hornet" (in + out on
+        intra-layer blocks, matching muxViz R semantics).
+    logger : logging.Logger, optional
 
     Returns
     -------
@@ -607,7 +666,7 @@ def get_multi_degree(supra: sps.spmatrix, layers: int, nodes: int, backend: str 
         Degree vector for physical nodes (aggregated across layers).
     """
     if backend == "hornet":
-        return compute_aggregated_outdegree(supra, nodes, layers)
+        return compute_multi_degree(supra, nodes, layers, is_directed=is_directed, logger=logger)
     tensor = build.get_node_tensor_from_supra_adjacency(supra, layers, nodes)
     agg_mat = build.get_aggregate_network(tensor, return_mat=True)
     centrality_vector = np.array(agg_mat.sum(axis=0)).ravel()

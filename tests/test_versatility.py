@@ -319,13 +319,31 @@ class TestVersatilityReference:
         computed = versatility.compute_multipagerank_centrality(net_interaction, net_n, net_l)
         compare_metrics(computed, net_muxviz_results["pagerank"], "PageRank (vs muxViz R)")
 
-    def test_hub_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
+    def test_hub_exact_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
         computed = versatility.compute_multi_hub_centrality(net_adjacency, net_n, net_l)
         compare_metrics(computed, net_muxviz_results["hub"], "Hub (vs muxViz R)")
 
-    def test_auth_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
+    def test_hub_approx_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
+        np.random.seed(42)
+        computed = versatility.compute_multi_hub_centrality(
+            net_adjacency, net_n, net_l, approx=True,
+            approx_args={"maxiter": 10000, "tol": 1e-10},
+        )
+        compare_metrics(computed, net_muxviz_results["hub"], "Hub approx (vs muxViz R)",
+                        rtol=0.05, atol=0.05)
+
+    def test_auth_exact_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
         computed = versatility.compute_multi_authority_centrality(net_interaction, net_n, net_l)
         compare_metrics(computed, net_muxviz_results["auth"], "Authority (vs muxViz R)")
+
+    def test_auth_approx_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
+        np.random.seed(42)
+        computed = versatility.compute_multi_authority_centrality(
+            net_interaction, net_n, net_l, approx=True,
+            approx_args={"maxiter": 10000, "tol": 1e-10},
+        )
+        compare_metrics(computed, net_muxviz_results["auth"], "Authority approx (vs muxViz R)",
+                        rtol=0.05, atol=0.05)
 
     def test_eigenvector_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
         computed = versatility.compute_eigenvector_centrality(net_interaction, net_n, net_l)
@@ -334,19 +352,19 @@ class TestVersatilityReference:
 
     # --- degree / strength reference tests --------------------------------
 
-    def test_indegree_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
+    def test_indegree_sum_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
         computed = versatility.compute_aggregated_indegree(net_adjacency, net_n, net_l)
         compare_metrics(computed, net_muxviz_results["indegree"], "Indegree (vs muxViz R)")
 
-    def test_outdegree_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
+    def test_outdegree_sum_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
         computed = versatility.compute_aggregated_outdegree(net_adjacency, net_n, net_l)
         compare_metrics(computed, net_muxviz_results["outdegree"], "Outdegree (vs muxViz R)")
 
-    def test_instrength_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
+    def test_instrength_sum_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
         computed = versatility.compute_aggregated_instrength(net_interaction, net_n, net_l)
         compare_metrics(computed, net_muxviz_results["instrength"], "Instrength (vs muxViz R)")
 
-    def test_outstrength_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
+    def test_outstrength_sum_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
         computed = versatility.compute_aggregated_outstrength(net_interaction, net_n, net_l)
         compare_metrics(computed, net_muxviz_results["outstrength"], "Outstrength (vs muxViz R)")
 
@@ -379,3 +397,17 @@ class TestVersatilityReference:
         computed = versatility.compute_aggregated_multioutstrength(net_interaction, net_n, net_l)
         expected = np.array(net_muxviz_results["outstrengthsum"]) - np.array(net_muxviz_results["outstrength"])
         compare_metrics(computed, expected, "MultiOutstrength (vs muxViz derived)")
+
+    # --- multi degree reference tests (R GetMultiDegree = indegree + outdegree)
+
+    def test_multi_degree_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
+        """R GetMultiDegree = GetMultiInDegree + GetMultiOutDegree (directed)."""
+        expected = np.array(net_muxviz_results["indegree"]) + np.array(net_muxviz_results["outdegree"])
+        computed = versatility.compute_multi_degree(net_adjacency, net_n, net_l, is_directed=True)
+        compare_metrics(computed, expected, "MultiDegree (vs muxViz R derived)")
+
+    def test_multi_degree_hornet_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
+        """get_multi_degree hornet backend matches R GetMultiDegree."""
+        expected = np.array(net_muxviz_results["indegree"]) + np.array(net_muxviz_results["outdegree"])
+        computed = versatility.get_multi_degree(net_adjacency, net_l, net_n, backend="hornet")
+        compare_metrics(computed, expected, "MultiDegree hornet (vs muxViz R derived)")

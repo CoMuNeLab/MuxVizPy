@@ -140,4 +140,6 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --color=yes"
+log_cli = true
+log_cli_level = "DEBUG"

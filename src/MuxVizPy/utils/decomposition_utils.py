@@ -151,6 +151,16 @@ class CPBackend(ABC):
         """
         return np.asarray(arr)
     
+    def get_time(self) -> float:
+        """
+        Get the current time for performance measurement. For GPU backends, this should synchronize and return accurate timing.
+
+        Returns:
+            float: Current time in seconds.
+        """
+        import time
+        return time.time()
+    
     @abstractmethod
     def multiply_gather(
             self, values: NDArray, indices: NDArray, factors: list[NDArray], exclude_mode: int
@@ -387,6 +397,13 @@ class RAPIDSBackend(CPBackend):
             return arr.get()
         return np.asarray(arr)
     
+    def get_time(self) -> float:
+        cp = self._cp
+        # synchronize to ensure all GPU operations are complete before timing
+        cp.cuda.Stream.null.synchronize()
+        import time
+        return time.time()
+
     def multiply_gather(
             self, values: NDArray, indices: NDArray, factors: list[NDArray], exclude_mode: int
     ) -> NDArray:

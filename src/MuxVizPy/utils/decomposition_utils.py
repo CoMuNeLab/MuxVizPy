@@ -264,11 +264,14 @@ class NumPyBackend(CPBackend):
 
         return kr_contrib
     
+    def maximum(self, array: NDArray, value: float) -> NDArray:
+        return np.maximum(array, value)
+
     def compute_norm(self, array: NDArray) -> float:
         return np.linalg.norm(array)
 
     def random_init(self, shapes: list[tuple[int,int]], random_state: np.random.Generator | int | None = None) -> list[NDArray]:
-        if random_state in None:
+        if random_state is None:
             rng = np.random.default_rng()
         elif isinstance(random_state, int):
             rng = np.random.default_rng(random_state)

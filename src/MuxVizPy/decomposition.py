@@ -1,11 +1,12 @@
-from os import times
-import torch
+from __future__ import annotations
 import logging
 import warnings
-from __future__ import annotations
 from typing import Literal
+
 import numpy as np
-from utils.decomposition_utils import get_backend, CPBackend
+import torch
+
+from MuxVizPy.utils.decomposition_utils import get_backend, CPBackend
 
 # ---- helper functions -----
 
@@ -90,7 +91,7 @@ def _initialize_factors(
                         rng = np.random.default_rng(random_state)
                         extra = rng.standard_normal((dim, rank-u.shape[1]))
                         u = np.hstack([u, extra])
-                    factors.append(u[:, rank])
+                    factors.append(u[:, :rank])
                 except Exception as e:
                     # fallback to random if SVD fails
                     warnings.warn(
@@ -197,7 +198,7 @@ def _sparse_mttkrp_no_weights(
     result = backend.zeros((dim, rank), dtype=np.float64)
 
     # compute khatri-rao contribution using backend
-    kr_contrib = backend.multiply_gather(values, factors, mode_indices, mode)
+    kr_contrib = backend.multiply_gather(values, mode_indices, factors, mode)
 
     # scatter-add contributions to result
     target_indices = mode_indices[mode]
@@ -350,7 +351,7 @@ def sparse_cp_decomposition(
 
         # compute reconstruction error on backend
         error = _compute_recon_error(
-            mode_indices, values, factors, weights
+            mode_indices, values, factors, weights, be
         )
         elapsed_time = be.get_time() - time
 
@@ -358,10 +359,11 @@ def sparse_cp_decomposition(
         convergence_history["elapsed_time"].append(elapsed_time)
         convergence_history["elapsed_time_per_mode"].append(elapsed_time_for_modes)
 
-        # check convergence
-        rel_change = abs(prev_error - error) / max(prev_error, 1e-10)
-        if rel_change < tol:
-            notConverged = False
+        # check convergence (skip first iteration where prev_error is inf)
+        if np.isfinite(prev_error):
+            rel_change = abs(prev_error - error) / max(prev_error, 1e-10)
+            if rel_change < tol:
+                notConverged = False
         prev_error = error
         iIter += 1
 

@@ -14,10 +14,7 @@ Classes:
 import pytest
 import numpy as np
 import scipy.sparse as sp
-from scipy.stats import spearmanr
-
 from MuxVizPy import versatility
-from MuxVizPy import leading_eigenv_approx
 from conftest import compare_metrics
 
 
@@ -217,11 +214,6 @@ class TestVersatilityCorrectness:
         ec = versatility.compute_eigenvector_centrality(net_adjacency, net_n, net_l)
         assert ec.shape == (net_n,)
 
-    def test_get_multi_RW_centrality_shape(self, net_adjacency, net_n, net_l):
-        # muxvizpy backend relies on build.build_supra_transition_matrix which
-        # may fail on networks with zero-degree replica nodes; test hornet backend instead
-        rw = versatility.get_multi_RW_centrality(net_adjacency, net_l, net_n, Type="classical", backend="hornet")
-        assert rw.shape == (net_n,)
 
 # ============================================================================
 # Backend comparison — muxvizpy vs hornet
@@ -230,35 +222,10 @@ class TestVersatilityCorrectness:
 class TestVersatilityBackendComparison:
     """Both backends produce consistent results on the same input.
 
-    Some algorithms use random initialisation (power iteration in hub/auth/
-    eigenvector), so we test rank correlation (Spearman >= 0.9) together with
-    relaxed absolute tolerance.
-
     Known semantic differences between backends:
     - **degree**: muxvizpy aggregates via the aggregate network (all edges
       including inter-layer), hornet uses intra-layer out-degree only.
-    - **eigenvector**: muxvizpy uses eigs(A, which="LR"), hornet uses
-      eigs(A^T, which="LM") with sign correction — different spectra.
-    - **RW**: muxvizpy relies on build_supra_transition_matrix which requires
-      all replica nodes to have non-zero degree; hornet handles this internally.
     """
-
-    @staticmethod
-    def _assert_backends_close(muxvizpy, hornet, name, rtol=0.15, atol=0.05):
-        """Compare backends; fall back to rank correlation if strict fails."""
-        muxvizpy = np.asarray(muxvizpy, dtype=np.float64).ravel()
-        hornet = np.asarray(hornet, dtype=np.float64).ravel()
-        assert muxvizpy.shape == hornet.shape, f"{name}: shape mismatch"
-
-        try:
-            np.testing.assert_allclose(muxvizpy, hornet, rtol=rtol, atol=atol)
-        except AssertionError:
-            # Fall back: rank correlation should still be high
-            corr, _ = spearmanr(muxvizpy, hornet)
-            assert corr >= 0.85, (
-                f"{name}: backends disagree (max diff={np.abs(muxvizpy - hornet).max():.4f}, "
-                f"Spearman r={corr:.4f})"
-            )
 
     def test_degree_backends_both_run(self, net_adjacency, net_n, net_l):
         """Degree backends have different semantics: muxvizpy collapses into
@@ -271,26 +238,6 @@ class TestVersatilityBackendComparison:
         assert hn.shape == (net_n,)
         assert np.all(mv >= 0)
         assert np.all(hn >= 0)
-
-    def test_rw_classical_backends(self, net_adjacency, net_n, net_l):
-        """muxvizpy backend relies on build_supra_transition_matrix which may
-        fail on networks with zero-degree replica nodes. Test only hornet."""
-        try:
-            mv = versatility.get_multi_RW_centrality(net_adjacency, net_l, net_n, Type="classical", backend="muxvizpy")
-        except (ValueError, Exception):
-            pytest.skip("muxvizpy RW backend cannot build transition matrix for this network")
-        hn = versatility.get_multi_RW_centrality(net_adjacency, net_l, net_n, Type="classical", backend="hornet")
-        self._assert_backends_close(mv, hn, "rw_classical")
-
-    def test_rw_pagerank_backends(self, net_adjacency, net_n, net_l):
-        """muxvizpy backend relies on build_supra_transition_matrix which may
-        fail on networks with zero-degree replica nodes. Test only hornet."""
-        try:
-            mv = versatility.get_multi_RW_centrality(net_adjacency, net_l, net_n, Type="pagerank", backend="muxvizpy")
-        except (ValueError, Exception):
-            pytest.skip("muxvizpy PageRank backend cannot build transition matrix for this network")
-        hn = versatility.get_multi_RW_centrality(net_adjacency, net_l, net_n, Type="pagerank", backend="hornet")
-        self._assert_backends_close(mv, hn, "rw_pagerank")
 
 # ============================================================================
 # Reference — comparison against pre-computed muxViz R results

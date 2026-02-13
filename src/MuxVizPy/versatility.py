@@ -699,61 +699,6 @@ def get_multi_degree(
     centrality_vector = np.array(agg_mat.sum(axis=0)).ravel()
     return centrality_vector
 
-def get_multi_RW_centrality(
-    supra: sps.spmatrix, layers: int, nodes: int,
-    Type: str = "classical", multilayer: bool = True, alpha: float = 0.15,
-    backend: str = "muxvizpy", logger: Optional[logging.Logger] = None,
-):
-    """
-    Computes multilayer random walk centrality using eigenvectors of the supra-transition matrix.
-
-    Parameters
-    ----------
-    supra : scipy.sparse matrix
-        Supra-adjacency matrix.
-    layers : int
-        Number of layers.
-    nodes : int
-        Number of physical nodes.
-    Type : str, optional
-        Type of transition: "classical" or "pagerank". Default is "classical".
-    multilayer : bool, optional
-        If True, aggregates replica node scores (muxvizpy backend only).
-    alpha : float, optional
-        Damping factor for the power iteration. Default is 0.15.
-    backend : str
-        "muxvizpy" or "hornet".
-    logger : logging.Logger, optional
-
-    Returns
-    -------
-    np.ndarray
-        Normalized RW centrality vector for physical nodes.
-    """
-    if backend == "hornet":
-        kind = Type.lower()
-        return compute_multi_rw_centrality(supra, nodes, layers, kind=kind, alpha=alpha, logger=logger)
-    supra_transition = build.build_supra_transition_matrix_from_supra_adjacency_matrix(supra, layers, nodes, Type="classical")
-    # we pass the transpose of the transition matrix to get the left eigenvectors
-    if Type=="classical":
-        tmp = sps.linalg.eigs(supra_transition, which="LR", k=1)
-        leading_eigenvector = tmp[1]
-        leading_eigenvalue = tmp[0][0]
-    elif Type=="pagerank":
-        leading_eigenvalue, leading_eigenvector = leading_eigenv_approx.leading_eigenv_approx(supra_transition, alpha=alpha)
-
-    if abs(leading_eigenvalue - 1) > 1e-5:
-        raise ValueError("GetRWOverallOccupationProbability: ERROR! Expected leading eigenvalue equal to 1, obtained", leading_eigenvalue, ". Aborting process.")
-
-    centrality_vector = leading_eigenvector / sum(leading_eigenvector)
-
-    if multilayer:
-        centrality_vector = centrality_vector.reshape([layers,nodes]).sum(axis=0)
-
-    centrality_vector = centrality_vector / max(centrality_vector)
-
-    return np.real(centrality_vector)
-
 def get_multi_RW_centrality_edge_colored(node_tensor: list[sps.spmatrix], cval: float = 0.15):
     """
     Computes multilayer RW centrality over edge-colored supra-adjacency without interlayer links.

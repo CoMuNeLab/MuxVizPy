@@ -240,7 +240,7 @@ def sparse_cp_decomposition(
         init: Literal["random", "hosvd"] = "random",
         max_iter: int = 100,
         tol: float = 1e-6,
-        non_negative: bool = False,
+        #non_negative: bool = False,
         regularization: float = 1e-12,
         random_state: int | None = None,
         logger: logging.Logger | None = None,
@@ -268,7 +268,7 @@ def sparse_cp_decomposition(
             - hosvd: Use Higher-Order SVD for initialization (slower but could converge faster).
         max_iter (int): Maximum number of iterations for the ALS algorithm.
         tol (float): Convergence tolerance for the ALS algorithm. Stops when the relative change in reconstruction error is below this threshold.
-        non_negative (bool): If True, enforce non-negativity constraints on factor matrices using projected ALS (values are clipped to >= 0 after each update).
+        DEPRECATED non_negative (bool): If True, enforce non-negativity constraints on factor matrices using projected ALS (values are clipped to >= 0 after each update).
         regularization (float): Tikhonov regularization for least-squares solvers. Adds a small ridge penalty to improve numerical stability, especially for sparse data.
         random_state (int | None): Seed for random initialization.
         logger (logging.Logger | None): Optional logger for debugging and progress tracking.
@@ -341,8 +341,9 @@ def sparse_cp_decomposition(
             factors[mode] = be.solve_least_squares(gram_matrix, mttkrp, regularization)
 
             # enforce non-negativity if needed
-            if non_negative:
-                factors[mode] = be.maximum(factors[mode], 0.0)
+            # TODO: Note that this can introduce stuck in local minima. Known issue for projected ALS for nncp
+            # if non_negative:
+            #     factors[mode] = be.maximum(factors[mode], 0.0)
 
             elapsed_time_for_modes.append(be.get_time() - mode_time)
 

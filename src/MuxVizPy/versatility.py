@@ -383,11 +383,18 @@ def compute_katz_centrality(
 
 def compute_multi_rw_centrality(
     adj: sps.csr_matrix, n: int, l: int, kind: str,
+    *,
+    alpha: float = 0.85, tol: float = 1e-12, max_iter: int = 10000,
     logger: Optional[logging.Logger] = None,
 ) -> np.ndarray:
     """
-    Compute multi-layer random walk centrality using the dominant eigenvector
-    of the transition matrix.
+    Compute multi-layer random walk centrality.
+
+    Two modes:
+        - ``kind="classical"``: stationary distribution via the dominant
+          eigenvector of the row-stochastic transition matrix T^T.
+        - ``kind="pagerank"``: PageRank power iteration with teleportation
+          and dangling-node handling.
 
     Parameters
     ----------
@@ -398,7 +405,13 @@ def compute_multi_rw_centrality(
     l : int
         Number of layers.
     kind : str
-        Transition matrix type ("classical", "pagerank").
+        ``"classical"`` or ``"pagerank"``.
+    alpha : float
+        Damping factor (only used when ``kind="pagerank"``). Default 0.85.
+    tol : float
+        Convergence tolerance (only used when ``kind="pagerank"``). Default 1e-12.
+    max_iter : int
+        Maximum iterations (only used when ``kind="pagerank"``). Default 10000.
     logger : logging.Logger, optional
 
     Returns
@@ -406,24 +419,72 @@ def compute_multi_rw_centrality(
     np.ndarray
         Max-normalized RW centrality per physical node, shape (n,).
     """
-    if kind == "pagerank":
-        return compute_multipagerank_centrality(adj, n, l, logger=logger)
+    NL = n * l
+    kind = kind.lower().strip()
 
-    tran_matrix = parsing_utils.build_transition_matrix_from_adjacency_matrix(adj, n, l, kind=kind, logger=logger)
-    eigvals, eigvecs = sps.linalg.eigs(tran_matrix.T, k=1, which="LM", return_eigenvectors=True)
-    lam = float(np.real_if_close(eigvals[0]))
-    vec = np.real_if_close(eigvecs[:, 0])
+    if kind == "classical":
+        tran_matrix = parsing_utils.build_transition_matrix_from_adjacency_matrix(
+            adj, n, l, kind="classical", logger=logger,
+        )
+        eigvals, eigvecs = sps.linalg.eigs(tran_matrix.T, k=1, which="LM", return_eigenvectors=True)
+        lam = float(np.real_if_close(eigvals[0]))
+        vec = np.real_if_close(eigvecs[:, 0])
 
-    x = vec / vec.sum()
-    x = np.reshape(x, (n, l), order="F")
-    x = x.sum(axis=1)
+        x = vec / vec.sum()
+        x = np.reshape(x, (n, l), order="F")
+        x = x.sum(axis=1)
 
-    maxv = x.max() if x.size else 0.0
-    rc = np.zeros_like(x, dtype=np.float32) if maxv == 0 else (x / maxv).astype(np.float32)
-    if logger and logger.isEnabledFor(logging.DEBUG):
-        logger.debug("Random Walk (%s): lambda_max=%.6g, min/mean/max=%.4g/%.4g/%.4g",
-                     kind, lam, rc.min(), rc.mean(), rc.max())
-    return rc
+        maxv = x.max() if x.size else 0.0
+        rc = np.zeros_like(x, dtype=np.float32) if maxv == 0 else (x / maxv).astype(np.float32)
+        if logger and logger.isEnabledFor(logging.DEBUG):
+            logger.debug("Random Walk (classical): lambda_max=%.6g, min/mean/max=%.4g/%.4g/%.4g",
+                         lam, rc.min(), rc.mean(), rc.max())
+        return rc
+
+    elif kind == "pagerank":
+        P = parsing_utils.build_transition_matrix_from_adjacency_matrix(
+            adj, n, l, kind="classical", logger=logger,
+        ).tocsr()
+
+        row_sums = np.asarray(P.sum(axis=1)).ravel()
+        dangling_mask = row_sums == 0.0
+        n_dangling = dangling_mask.sum()
+
+        if logger and logger.isEnabledFor(logging.DEBUG):
+            logger.debug("PageRank: %d/%d dangling nodes (%.1f%%)", n_dangling, NL, 100 * n_dangling / NL)
+
+        v = np.full(NL, 1.0 / NL, dtype=np.float64)
+        x = np.full(NL, 1.0 / NL, dtype=np.float64)
+        PT = P.T.tocsr()
+
+        err = np.inf
+        it = 0
+        for it in range(max_iter):
+            dangling_mass = x[dangling_mask].sum()
+            x_next = alpha * (PT @ x) + (alpha * dangling_mass + (1.0 - alpha)) * v
+            x_sum = x_next.sum()
+            if x_sum > 0:
+                x_next /= x_sum
+            err = np.abs(x_next - x).sum()
+            x = x_next
+            if err < tol:
+                break
+
+        if logger and logger.isEnabledFor(logging.DEBUG):
+            logger.debug("PageRank converged in %d iterations with error %.3e", it + 1, err)
+
+        X = np.reshape(x, (n, l), order="F")
+        mpc = X.sum(axis=1)
+        maxv = mpc.max() if mpc.size else 0.0
+        mpc_norm = np.zeros_like(mpc, dtype=np.float32) if maxv == 0 else (mpc / maxv).astype(np.float32)
+
+        if logger and logger.isEnabledFor(logging.DEBUG):
+            logger.debug("PageRank: alpha=%.3f, iters=%d, err=%.3e, min/mean/max=%.4g/%.4g/%.4g",
+                         alpha, it + 1, err, mpc_norm.min(), mpc_norm.mean(), mpc_norm.max())
+        return mpc_norm
+
+    else:
+        raise ValueError(f"Unknown RW kind: {kind!r}. Expected 'classical' or 'pagerank'.")
 
 
 def compute_multipagerank_centrality(
@@ -432,8 +493,10 @@ def compute_multipagerank_centrality(
     logger: Optional[logging.Logger] = None,
 ) -> np.ndarray:
     """
-    Compute multi-layer PageRank centrality with proper teleportation and
-    dangling-node handling.
+    Compute multi-layer PageRank centrality.
+
+    Thin wrapper around :func:`compute_multi_rw_centrality` with
+    ``kind="pagerank"``.
 
     Parameters
     ----------
@@ -444,11 +507,11 @@ def compute_multipagerank_centrality(
     l : int
         Number of layers.
     alpha : float
-        Damping factor.
+        Damping factor. Default 0.85.
     tol : float
-        Convergence tolerance.
+        Convergence tolerance. Default 1e-12.
     max_iter : int
-        Maximum iterations.
+        Maximum iterations. Default 10000.
     logger : logging.Logger, optional
 
     Returns
@@ -456,46 +519,10 @@ def compute_multipagerank_centrality(
     np.ndarray
         Max-normalized PageRank per physical node, shape (n,).
     """
-    NL = n * l
-    P = parsing_utils.build_transition_matrix_from_adjacency_matrix(adj, n, l, kind="classical", logger=logger).tocsr()
-
-    row_sums = np.asarray(P.sum(axis=1)).ravel()
-    dangling_mask = row_sums == 0.0
-    n_dangling = dangling_mask.sum()
-
-    if logger and logger.isEnabledFor(logging.DEBUG):
-        logger.debug("PageRank: %d/%d dangling nodes (%.1f%%)", n_dangling, NL, 100 * n_dangling / NL)
-
-    v = np.full(NL, 1.0 / NL, dtype=np.float64)
-    x = np.full(NL, 1.0 / NL, dtype=np.float64)
-    PT = P.T.tocsr()
-
-    err = np.inf
-    it = 0
-    for it in range(max_iter):
-        dangling_mass = x[dangling_mask].sum()
-        x_next = alpha * (PT @ x) + (alpha * dangling_mass + (1.0 - alpha)) * v
-        x_sum = x_next.sum()
-        if x_sum > 0:
-            x_next /= x_sum
-        err = np.abs(x_next - x).sum()
-        x = x_next
-        if err < tol:
-            break
-
-    if logger and logger.isEnabledFor(logging.DEBUG):
-        logger.debug("PageRank converged in %d iterations with error %.3e", it + 1, err)
-
-    X = np.reshape(x, (n, l), order="F")
-    mpc = X.sum(axis=1)
-    maxv = mpc.max() if mpc.size else 0.0
-    mpc_norm = np.zeros_like(mpc, dtype=np.float32) if maxv == 0 else (mpc / maxv).astype(np.float32)
-
-    if logger and logger.isEnabledFor(logging.DEBUG):
-        logger.debug("PageRank (implicit): alpha=%.3f, iters=%d, err=%.3e, min/mean/max=%.4g/%.4g/%.4g",
-                     alpha, it + 1, err, mpc_norm.min(), mpc_norm.mean(), mpc_norm.max())
-
-    return mpc_norm
+    return compute_multi_rw_centrality(
+        adj, n, l, kind="pagerank",
+        alpha=alpha, tol=tol, max_iter=max_iter, logger=logger,
+    )
 
 
 def compute_multi_hub_centrality(
@@ -705,7 +732,7 @@ def get_multi_RW_centrality(
     """
     if backend == "hornet":
         kind = Type.lower()
-        return compute_multi_rw_centrality(supra, nodes, layers, kind=kind, logger=logger)
+        return compute_multi_rw_centrality(supra, nodes, layers, kind=kind, alpha=alpha, logger=logger)
     supra_transition = build.build_supra_transition_matrix_from_supra_adjacency_matrix(supra, layers, nodes, Type="classical")
     # we pass the transpose of the transition matrix to get the left eigenvectors
     if Type=="classical":

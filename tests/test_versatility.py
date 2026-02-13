@@ -179,10 +179,25 @@ class TestVersatilityCorrectness:
         assert rc.shape == (net_n,)
         assert rc.max() == pytest.approx(1.0, abs=1e-6)
 
+    def test_compute_multi_rw_centrality_pagerank_shape(self, net_adjacency, net_n, net_l):
+        pr = versatility.compute_multi_rw_centrality(net_adjacency, net_n, net_l, kind="pagerank")
+        assert pr.shape == (net_n,)
+        assert pr.max() == pytest.approx(1.0, abs=1e-6)
+
     def test_compute_multipagerank_centrality_shape(self, net_adjacency, net_n, net_l):
         pr = versatility.compute_multipagerank_centrality(net_adjacency, net_n, net_l)
         assert pr.shape == (net_n,)
         assert pr.max() == pytest.approx(1.0, abs=1e-6)
+
+    def test_multipagerank_wrapper_matches_direct(self, net_adjacency, net_n, net_l):
+        """compute_multipagerank_centrality is a wrapper and must match compute_multi_rw_centrality(kind='pagerank')."""
+        direct = versatility.compute_multi_rw_centrality(net_adjacency, net_n, net_l, kind="pagerank")
+        wrapper = versatility.compute_multipagerank_centrality(net_adjacency, net_n, net_l)
+        np.testing.assert_array_equal(direct, wrapper)
+
+    def test_compute_multi_rw_centrality_unknown_kind_raises(self, net_adjacency, net_n, net_l):
+        with pytest.raises(ValueError, match="Unknown RW kind"):
+            versatility.compute_multi_rw_centrality(net_adjacency, net_n, net_l, kind="bogus")
 
     def test_compute_multi_hub_centrality_shape(self, net_adjacency, net_n, net_l):
         hc = versatility.compute_multi_hub_centrality(net_adjacency, net_n, net_l)
@@ -198,8 +213,8 @@ class TestVersatilityCorrectness:
         deg = versatility.get_multi_degree(net_adjacency, net_l, net_n)
         assert deg.shape == (net_n,)
 
-    def test_get_multi_eigenvector_centrality_shape(self, net_adjacency, net_n, net_l):
-        ec = versatility.get_multi_eigenvector_centrality(net_adjacency, net_l, net_n)
+    def test_compute_eigenvector_centrality_public_shape(self, net_adjacency, net_n, net_l):
+        ec = versatility.compute_eigenvector_centrality(net_adjacency, net_n, net_l)
         assert ec.shape == (net_n,)
 
     def test_get_multi_RW_centrality_shape(self, net_adjacency, net_n, net_l):

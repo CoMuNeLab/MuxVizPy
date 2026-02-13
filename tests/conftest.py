@@ -251,6 +251,187 @@ def test_data_dir():
     return data_dir
 
 
+class MuxVizScriptGenerator:
+    """Generate R scripts for muxViz metrics computation.
+
+    Usage (standalone)::
+
+        script = MuxVizScriptGenerator.generate_script(
+            edgelist_path=Path("edges.csv"),
+            n_nodes=10, n_layers=3,
+            output_path=Path("results.json"),
+            metrics=["degree", "degreesum"],
+        )
+        runner = MuxVizRunner()
+        runner.run_r_script(script)
+    """
+
+    METRIC_FUNCTIONS = {
+        "katz": "GetMultiKatzCentrality(mlnet, {n_layers}, {n_nodes})",
+        "pagerank": "GetMultiPageRankCentrality(mlnet, {n_layers}, {n_nodes})",
+        "hub": "GetMultiHubCentrality(mlnet, {n_layers}, {n_nodes})",
+        "auth": "GetMultiAuthCentrality(mlnet, {n_layers}, {n_nodes})",
+        "indegree": "GetMultiInDegree(mlnet, {n_layers}, {n_nodes}, TRUE)",
+        "outdegree": "GetMultiOutDegree(mlnet, {n_layers}, {n_nodes}, TRUE)",
+        "instrength": "GetMultiInStrength(mlnet, {n_layers}, {n_nodes}, TRUE)",
+        "outstrength": "GetMultiOutStrength(mlnet, {n_layers}, {n_nodes}, TRUE)",
+        "indegreesum": "GetMultiInDegreeSum(mlnet, {n_layers}, {n_nodes}, TRUE)",
+        "outdegreesum": "GetMultiOutDegreeSum(mlnet, {n_layers}, {n_nodes}, TRUE)",
+        "instrengthsum": "GetMultiInStrengthSum(mlnet, {n_layers}, {n_nodes}, TRUE)",
+        "outstrengthsum": "GetMultiOutStrengthSum(mlnet, {n_layers}, {n_nodes}, TRUE)",
+        "degree": "GetMultiDegree(mlnet, {n_layers}, {n_nodes}, TRUE)",
+        "degreesum": "GetMultiDegreeSum(mlnet, {n_layers}, {n_nodes}, TRUE)",
+        "eigenvector": "GetMultiEigenvectorCentrality(mlnet, {n_layers}, {n_nodes})",
+    }
+
+    @staticmethod
+    def generate_script(
+        edgelist_path: Path,
+        n_nodes: int,
+        n_layers: int,
+        output_path: Path,
+        metrics: List[str] = None,
+    ) -> str:
+        """Generate R script for computing specified metrics.
+
+        Parameters
+        ----------
+        edgelist_path : Path
+            Path to CSV edgelist with columns
+            node.from, layer.from, node.to, layer.to, weight.
+        n_nodes : int
+        n_layers : int
+        output_path : Path
+            Path for JSON output.
+        metrics : list of str or None
+            Metric names to compute (default: all).
+
+        Returns
+        -------
+        str
+            R script ready to be executed.
+        """
+        if metrics is None:
+            metrics = list(MuxVizScriptGenerator.METRIC_FUNCTIONS.keys())
+
+        metric_lines = []
+        for metric in metrics:
+            if metric not in MuxVizScriptGenerator.METRIC_FUNCTIONS:
+                continue
+            func = MuxVizScriptGenerator.METRIC_FUNCTIONS[metric]
+            metric_lines.append(
+                f'        results${metric} <- as.vector({func.format(n_layers=n_layers, n_nodes=n_nodes)})'
+            )
+
+        return f'''
+        library(muxViz)
+        library(jsonlite)
+
+        df <- read.csv("{edgelist_path}", header = TRUE, sep=",")
+
+        # Remap node and layer IDs to 1-based dense indices
+        remap_dense <- function(vec) {{
+            uniq <- sort(unique(vec))
+            mapping <- setNames(seq_along(uniq), uniq)
+            as.integer(mapping[as.character(vec)])
+        }}
+
+        df$node.from  <- remap_dense(c(df$node.from, df$node.to))[1:nrow(df)]
+        df$node.to    <- remap_dense(c(df$node.from, df$node.to))[(nrow(df)+1):(2*nrow(df))]
+        df$layer.from <- remap_dense(c(df$layer.from, df$layer.to))[1:nrow(df)]
+        df$layer.to   <- remap_dense(c(df$layer.from, df$layer.to))[(nrow(df)+1):(2*nrow(df))]
+
+        mlnet <- BuildSupraAdjacencyMatrixFromExtendedEdgelist(df, {n_layers}, {n_nodes}, TRUE)
+
+        results <- list()
+{chr(10).join(metric_lines)}
+
+        write_json(results, "{output_path}", auto_unbox=TRUE)
+        '''
+
+
+def _ensure_edges_csv(config_name: str) -> Path:
+    """Return the path to an edges CSV for a config, writing it if needed."""
+    config = NETWORK_CONFIGS[config_name]
+    data_dir = TESTS_DATA_DIR / config_name
+    data_dir.mkdir(parents=True, exist_ok=True)
+    edges_path = data_dir / "edges.csv"
+    if edges_path.exists():
+        return edges_path
+    # For configs without a data_dir (e.g. toy), write from TOY_EDGES
+    save_network_for_muxviz(TOY_EDGES, edges_path)
+    return edges_path
+
+
+def recompute_muxviz_results(
+    config_name: str,
+    metrics: List[str] = None,
+    existing_results: Dict[str, Any] = None,
+) -> Dict[str, Any]:
+    """Recompute muxViz R reference results for missing metrics.
+
+    Parameters
+    ----------
+    config_name : str
+        Network config key (e.g. "toy", "random_large").
+    metrics : list of str or None
+        Metrics to compute.  If None, computes only those missing from
+        *existing_results*.
+    existing_results : dict or None
+        Already-loaded results dict.  Missing keys are recomputed and
+        merged in.  The updated JSON is written back to disk.
+
+    Returns
+    -------
+    dict
+        Merged results.
+    """
+    config = NETWORK_CONFIGS[config_name]
+    n_nodes = config["n_nodes"]
+    n_layers = config["n_layers"]
+    results_path = TESTS_DATA_DIR / config_name / "muxviz_results.json"
+
+    if existing_results is None:
+        existing_results = {}
+        if results_path.exists():
+            with open(results_path) as f:
+                existing_results = json.load(f)
+
+    if metrics is None:
+        all_metrics = list(MuxVizScriptGenerator.METRIC_FUNCTIONS.keys())
+        metrics = [m for m in all_metrics if m not in existing_results]
+
+    if not metrics:
+        return existing_results
+
+    try:
+        runner = MuxVizRunner()
+    except FileNotFoundError:
+        return existing_results
+
+    edges_path = _ensure_edges_csv(config_name)
+    output_path = TESTS_DATA_DIR / config_name / "muxviz_recomputed.json"
+
+    script = MuxVizScriptGenerator.generate_script(
+        edges_path, n_nodes, n_layers, output_path, metrics,
+    )
+    try:
+        runner.run_r_script(script)
+    except Exception:
+        return existing_results
+
+    if output_path.exists():
+        with open(output_path) as f:
+            new_results = json.load(f)
+        existing_results.update(new_results)
+        # Persist the merged results
+        with open(results_path, "w") as f:
+            json.dump(existing_results, f)
+        output_path.unlink()
+
+    return existing_results
+
+
 # ---------------------------------------------------------------------------
 # Toy network: 10 nodes, 3 layers (from hornet NetworkGenerator)
 # ---------------------------------------------------------------------------
@@ -444,9 +625,28 @@ def net_nl(net_info):
 
 @pytest.fixture(scope="session")
 def net_muxviz_results(network_config):
-    """Load pre-computed muxViz R reference results. Skips if unavailable."""
+    """Load pre-computed muxViz R reference results.
+
+    If the JSON exists but is missing some metric keys, attempts to
+    recompute them via the Singularity container (requires muxviz.sif).
+    Skips if no results file exists and cannot be generated.
+    """
     results_path = TESTS_DATA_DIR / network_config / "muxviz_results.json"
     if not results_path.exists():
-        pytest.skip(f"No muxViz reference results for '{network_config}'")
+        # Try to generate from scratch via container
+        results = recompute_muxviz_results(network_config)
+        if not results:
+            pytest.skip(f"No muxViz reference results for '{network_config}'")
+        return results
+
     with open(results_path) as f:
-        return json.load(f)
+        results = json.load(f)
+
+    # Check for missing metrics and recompute if container is available
+    all_metrics = list(MuxVizScriptGenerator.METRIC_FUNCTIONS.keys())
+    missing = [m for m in all_metrics if m not in results]
+    if missing:
+        results = recompute_muxviz_results(
+            network_config, metrics=missing, existing_results=results,
+        )
+    return results

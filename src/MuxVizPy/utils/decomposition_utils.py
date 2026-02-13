@@ -151,6 +151,7 @@ class CPBackend(ABC):
         """
         return np.asarray(arr)
     
+    @abstractmethod
     def multiply_gather(
             self, values: NDArray, indices: NDArray, factors: list[NDArray], exclude_mode: int
     ) -> NDArray:
@@ -167,20 +168,19 @@ class CPBackend(ABC):
         Returns:
             NDArray: The resulting MTTKRP contribution for the specified mode (shape: nvalues x rank)
         """
-        rank = factors[0].shape[1]
-        n_modes = len(factors)
+        pass
 
-        kr_contrib = np.broadcast_to(
-            values[:, np.newaxis], (len(values), rank)
-        ).copy() # (nvalues, rank)
+    @abstractmethod
+    def compute_norm(self, array: NDArray) -> float:
+        """
+        Compute the Frobenius norm of an array by the backend. This is used for convergence checks and error computation.
+        Args:
+            array (NDArray): The array for which to compute the norm.
+        Returns:
+            float: The computed Frobenius norm of the array.
+        """
+        pass
 
-        # Multiply by factor values at each non-zero's coordinates
-        for m in range(n_modes): # 0-->3
-            if m != exclude_mode:
-                factor_vals = factors[m][indices[m], :] # (nvalues, rank)
-                kr_contrib *= factor_vals
-        return kr_contrib
-    
 class NumPyBackend(CPBackend):
     """CPU backend implementation using NumPy and SciPy."""
     @property
@@ -236,6 +236,26 @@ class NumPyBackend(CPBackend):
             normalized.append(factor / norms)
             weights *= norms
         return normalized, weights
+    
+    def multiply_gather(self, values, indices, factors, exclude_mode):
+        rank = factors[0].shape[1]
+        n_modes = len(factors)
+
+        # Start with values broadcast to (nnz, rank)
+        kr_contrib = np.broadcast_to(
+            values[:, np.newaxis], (len(values), rank)
+        ).copy()
+
+        # Multiply by factor values at each non-zero's coordinates
+        for m in range(n_modes):
+            if m != exclude_mode:
+                factor_vals = factors[m][indices[m], :]  # (nnz, rank)
+                kr_contrib *= factor_vals
+
+        return kr_contrib
+    
+    def compute_norm(self, array: NDArray) -> float:
+        return np.linalg.norm(array)
 
     def random_init(self, shapes: list[tuple[int,int]], random_state: np.random.Generator | int | None = None) -> list[NDArray]:
         if random_state in None:
@@ -391,6 +411,9 @@ class RAPIDSBackend(CPBackend):
                 factor_vals = factors[m][indices[m], :] # (nvalues, rank)
                 kr_contrib *= factor_vals
         return kr_contrib
+    
+    def compute_norm(self, array: NDArray) -> float:
+        return float(self._cp.linalg.norm(array))
     
 # Backend registry
 _BACKENDS: dict[str, type[CPBackend]] = {

@@ -672,36 +672,6 @@ def get_multi_degree(
     centrality_vector = np.array(agg_mat.sum(axis=0)).ravel()
     return centrality_vector
 
-def get_multi_eigenvector_centrality(
-    supra: sps.spmatrix, layers: int, nodes: int,
-    backend: str = "muxvizpy", logger: Optional[logging.Logger] = None,
-) -> np.ndarray:
-    """
-    Computes multilayer eigenvector centrality by summing the supra-eigenvector across layers.
-
-    Parameters
-    ----------
-    supra : scipy.sparse matrix
-        Supra-adjacency matrix.
-    layers : int
-        Number of layers.
-    nodes : int
-        Number of physical nodes.
-    backend : str
-        "muxvizpy" (eigs with LR) or "hornet" (eigs on A^T with LM + sign correction).
-    logger : logging.Logger, optional
-
-    Returns
-    -------
-    np.ndarray
-        Normalized eigenvector centrality vector for each physical node.
-    """
-    if backend == "hornet":
-        return compute_eigenvector_centrality(supra, nodes, layers, logger=logger)
-    leading_eigenvector = sps.linalg.eigs(supra, which="LR", k=1)[1]
-    centrality_vector = np.real(abs(leading_eigenvector.reshape([layers,nodes]).sum(axis=0)))
-    return centrality_vector/max(centrality_vector)
-
 def get_multi_RW_centrality(
     supra: sps.spmatrix, layers: int, nodes: int,
     Type: str = "classical", multilayer: bool = True, alpha: float = 0.15,

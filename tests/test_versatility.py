@@ -257,16 +257,6 @@ class TestVersatilityBackendComparison:
         assert np.all(mv >= 0)
         assert np.all(hn >= 0)
 
-    def test_eigenvector_backends_both_normalized(self, net_adjacency, net_n, net_l):
-        """Eigenvector backends use different spectral criteria (LR vs LM on A^T).
-        Verify both produce normalized results."""
-        mv = versatility.get_multi_eigenvector_centrality(net_adjacency, net_l, net_n, backend="muxvizpy")
-        hn = versatility.get_multi_eigenvector_centrality(net_adjacency, net_l, net_n, backend="hornet")
-        assert mv.shape == (net_n,)
-        assert hn.shape == (net_n,)
-        assert mv.max() == pytest.approx(1.0, abs=1e-4)
-        assert hn.max() == pytest.approx(1.0, abs=1e-4)
-
     def test_rw_classical_backends(self, net_adjacency, net_n, net_l):
         """muxvizpy backend relies on build_supra_transition_matrix which may
         fail on networks with zero-degree replica nodes. Test only hornet."""

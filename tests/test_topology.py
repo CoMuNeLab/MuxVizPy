@@ -239,7 +239,12 @@ class TestTopologyReference:
 
         stats = topology.get_multi_path_statistics(net_adjacency, net_l, net_n)
         computed = np.array(stats["closeness"], dtype=np.float64)
-        expected = np.asarray(net_muxviz_results["closeness"], dtype=np.float64).ravel()
+        # GetMultiClosenessCentrality returns a named list in R; older JSON entries
+        # may have been serialized as {"closeness": [...]} instead of a plain array.
+        closeness_raw = net_muxviz_results["closeness"]
+        if isinstance(closeness_raw, dict):
+            closeness_raw = next(iter(closeness_raw.values()))
+        expected = np.asarray(closeness_raw, dtype=np.float64).ravel()
 
         compare_metrics(
             computed, expected,

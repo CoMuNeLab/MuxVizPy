@@ -10,6 +10,7 @@ Modules
 - core:           VirusMultiplex and VirusMultiplex_from_dirlist constructors
 - build:          Construction of supra-structures and tensors
 - versatility:    Multilayer centrality functions
+- global_descriptors: Global properties of multilayer networks
 - topology:       Connected components, LCC, LIC, LVC
 - percolation:    Vertex percolation analysis
 - mesoscale:      SBM modularity and inter-layer correlations
@@ -23,7 +24,7 @@ import importlib
 
 __all__ = [
     "VirusMultiplex", "VirusMultiplex_from_dirlist",
-    "build","versatility","topology","mesoscale","percolation",
+    "build","versatility","topology","mesoscale","percolation","global_descriptors",
     "utils","leading_eigenv_approx","plotMux","visualization"
 ]
 

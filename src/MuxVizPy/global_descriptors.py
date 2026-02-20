@@ -57,12 +57,6 @@ def _sparse_pmin(A: sp.csr_matrix, B: sp.csr_matrix) -> sp.csr_matrix:
     return result
 
 
-def _is_symmetric(adj: sp.csr_matrix) -> bool:
-    """Return True if adj is symmetric (undirected network)."""
-    diff = adj - adj.T
-    diff.eliminate_zeros()
-    return diff.nnz == 0
-
 
 def compute_average_global_overlap(
     adj: sp.csr_matrix,
@@ -119,8 +113,10 @@ def compute_average_global_overlap(
     sum_O = float(O.sum())
     avg = l * sum_O / norm_total if norm_total != 0 else 0.0
 
-    if _is_symmetric(adj):
-        avg /= 2
+    # R checks `sum(A - A^T) == 0` before halving.  However sum(A) == sum(A^T)
+    # for any matrix (transposing preserves the total), so R's condition is
+    # always True and R always halves.  We replicate that behaviour here.
+    avg /= 2
 
     if logger and logger.isEnabledFor(logging.DEBUG):
         logger.debug(f"sum(O): {sum_O}, NormTotal: {norm_total}, L: {l}")

@@ -283,6 +283,7 @@ class MuxVizScriptGenerator:
         "degreesum": "GetMultiDegreeSum(mlnet, {n_layers}, {n_nodes}, TRUE)",
         "eigenvector": "GetMultiEigenvectorCentrality(mlnet, {n_layers}, {n_nodes})",
         "agcc": "GetAverageGlobalClustering(mlnet, {n_layers}, {n_nodes})",
+        "local_clus": "GetLocalClustering(mlnet, {n_layers}, {n_nodes})",
         "agov": "GetAverageGlobalOverlapping(mlnet, {n_layers}, {n_nodes}, FALSE)",
         "agov_mat": "GetAverageGlobalOverlappingMatrix(mlnet, {n_layers}, {n_nodes}, FALSE)",
         "agnov_mat": "GetAverageGlobalNodeOverlappingMatrix(mlnet, {n_layers}, {n_nodes})",
@@ -421,7 +422,7 @@ def recompute_muxviz_results(
     )
     try:
         runner.run_r_script(script)
-    except Exception:
+    except BaseException:
         return existing_results
 
     if output_path.exists():

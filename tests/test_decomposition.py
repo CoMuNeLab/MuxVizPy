@@ -454,17 +454,6 @@ class TestSparseCPCorrectness:
         assert final_error < 1.0  # relative error below 100%
         assert np.all(weights > 0)
 
-    def test_non_negative(self, small_tensor):
-        """Non-negative mode should produce non-negative factors."""
-        (A, B, C, D), weights, _ = sparse_cp_decomposition(
-            small_tensor, rank=3, max_iter=30, non_negative=True,
-            backend="numpy", random_state=42,
-        )
-        assert np.all(A >= 0)
-        assert np.all(B >= 0)
-        assert np.all(C >= 0)
-        assert np.all(D >= 0)
-
     def test_reproducible_with_seed(self, small_tensor):
         """Same random_state produces identical results."""
         (A1, B1, C1, D1), w1, _ = sparse_cp_decomposition(

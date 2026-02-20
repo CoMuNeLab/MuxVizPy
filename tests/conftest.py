@@ -282,6 +282,10 @@ class MuxVizScriptGenerator:
         "degree": "GetMultiDegree(mlnet, {n_layers}, {n_nodes}, TRUE)",
         "degreesum": "GetMultiDegreeSum(mlnet, {n_layers}, {n_nodes}, TRUE)",
         "eigenvector": "GetMultiEigenvectorCentrality(mlnet, {n_layers}, {n_nodes})",
+        "agcc": "GetAverageGlobalClustering(mlnet, {n_layers}, {n_nodes})",
+        "agov": "GetAverageGlobalOverlapping(mlnet, {n_layers}, {n_nodes}, FALSE)",
+        "agov_mat": "GetAverageGlobalOverlappingMatrix(mlnet, {n_layers}, {n_nodes}, FALSE)",
+        "agnov_mat": "GetAverageGlobalNodeOverlappingMatrix(mlnet, {n_layers}, {n_nodes})",
     }
 
     @staticmethod

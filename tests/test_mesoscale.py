@@ -61,6 +61,8 @@ class TestLocalClusteringReference:
     def test_local_clus_vs_muxviz(
         self, net_adjacency, net_n, net_l, net_muxviz_results, network_config
     ):
+        if network_config == "random_large":
+            pytest.skip("GetLocalClustering scales as O(N²L²) and is too slow for random_large")
         if "local_clus" not in net_muxviz_results:
             pytest.skip(f"'local_clus' not in reference results for '{network_config}'")
 

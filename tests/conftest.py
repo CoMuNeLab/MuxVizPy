@@ -287,6 +287,8 @@ class MuxVizScriptGenerator:
         "agov": "GetAverageGlobalOverlapping(mlnet, {n_layers}, {n_nodes}, FALSE)",
         "agov_mat": "GetAverageGlobalOverlappingMatrix(mlnet, {n_layers}, {n_nodes}, FALSE)",
         "agnov_mat": "GetAverageGlobalNodeOverlappingMatrix(mlnet, {n_layers}, {n_nodes})",
+        "closeness": "GetMultiClosenessCentrality(mlnet, {n_layers}, {n_nodes})",
+        "sp_similarity": "GetSPSimilarityMatrix(mlnet, {n_layers}, {n_nodes})",
     }
 
     @staticmethod

@@ -402,6 +402,44 @@ def build_supra_adjacency_matrix_from_extended_edgelist(
     return M
 
 
+def build_density_matrix(adj: sps.spmatrix) -> sps.spmatrix:
+    """
+    Build the Von Neumann density matrix from an adjacency matrix.
+
+    Computes the normalised graph Laplacian (BGS density matrix):
+        rho = L / tr(L)
+    where L is the combinatorial Laplacian and tr(L) = sum of degrees = 2m
+    for an undirected graph with m edges.
+
+    Parameters
+    ----------
+    adj : scipy.sparse matrix
+        Symmetric adjacency matrix (undirected graph).
+
+    Returns
+    -------
+    scipy.sparse.csr_matrix
+        Sparse density matrix with trace 1.
+
+    Raises
+    ------
+    ValueError
+        If the adjacency matrix has no edges (trace would be zero).
+
+    References
+    ----------
+    De Domenico et al. (2015) "Structural reducibility of multilayer networks",
+    Nature Communications, 6, 6864.
+    """
+    adj = adj.astype(np.float64, copy=False)
+    degree = np.asarray(adj.sum(axis=1)).flatten()
+    lap = sps.diags(degree) - adj
+    trace = degree.sum()  # tr(L) = sum of all degrees
+    if trace == 0:
+        raise ValueError("Adjacency matrix has no edges; Laplacian trace is zero.")
+    return (lap / trace).tocsr()
+
+
 def create_supra_transition_matrix_virus(
     supra: sps.spmatrix,
     node_tensor: list[sps.spmatrix],

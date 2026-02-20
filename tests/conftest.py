@@ -228,6 +228,8 @@ class MuxVizRunner:
             )
             return {"stdout": result.stdout, "stderr": result.stderr}
         except subprocess.CalledProcessError as e:
+            print("\n=== MuxViz STDOUT ===\n", e.stdout)
+            print("\n=== MuxViz STDERR ===\n", e.stderr)
             pytest.fail(f"R script failed: {e.stderr}")
         finally:
             if Path(r_script_path).exists():
@@ -283,12 +285,18 @@ class MuxVizScriptGenerator:
         "degreesum": "GetMultiDegreeSum(mlnet, {n_layers}, {n_nodes}, TRUE)",
         "eigenvector": "GetMultiEigenvectorCentrality(mlnet, {n_layers}, {n_nodes})",
         "agcc": "GetAverageGlobalClustering(mlnet, {n_layers}, {n_nodes})",
-        "local_clus": "GetLocalClustering(mlnet, {n_layers}, {n_nodes})",
+        # local_clus excluded: GetLocalClustering allocates a dense NL×NL ones-matrix and
+        # uses SupraAdjacencyToBlockTensor on the resulting dense F3 = A·ones·A product.
+        # This triggers an R "long vectors" crash even for small networks (diagonalMatrix
+        # zero-init from zeros() is expanded inside cbind), and is O(NL²) in memory.
         "agov": "GetAverageGlobalOverlapping(mlnet, {n_layers}, {n_nodes}, FALSE)",
         "agov_mat": "GetAverageGlobalOverlappingMatrix(mlnet, {n_layers}, {n_nodes}, FALSE)",
         "agnov_mat": "GetAverageGlobalNodeOverlappingMatrix(mlnet, {n_layers}, {n_nodes})",
-        "closeness": "GetMultiClosenessCentrality(mlnet, {n_layers}, {n_nodes})",
+        "closeness": "unlist(GetMultiClosenessCentrality(mlnet, {n_layers}, {n_nodes}))",
         "sp_similarity": "GetSPSimilarityMatrix(mlnet, {n_layers}, {n_nodes})",
+        # Information-theoretic metrics (require BlockTensor, added to the template)
+        "vn_entropy": "sapply(BlockTensor, GetRenyiEntropyFromAdjacencyMatrix)",
+        "jsd_matrix": "local({{ vne <- sapply(BlockTensor, GetRenyiEntropyFromAdjacencyMatrix); as.vector(outer(seq_len({n_layers}), seq_len({n_layers}), Vectorize(function(l1, l2) GetJensenShannonDivergence(BlockTensor[[l1]], BlockTensor[[l2]], vne[l1], vne[l2])))) }})",
     }
 
     @staticmethod
@@ -349,6 +357,13 @@ class MuxVizScriptGenerator:
         df$layer.to   <- remap_dense(c(df$layer.from, df$layer.to))[(nrow(df)+1):(2*nrow(df))]
 
         mlnet <- BuildSupraAdjacencyMatrixFromExtendedEdgelist(df, {n_layers}, {n_nodes}, TRUE)
+
+        BlockTensor <- lapply(seq_len({n_layers}), function(l) {{
+            s <- (l - 1L) * {n_nodes} + 1L
+            e <- l * {n_nodes}
+            adj <- as.matrix(mlnet[s:e, s:e])  # dense first; t() on sparse can produce dsCMatrix
+            sign(adj + t(adj))  # symmetrize and binarize (required for BGS density matrix)
+        }})
 
         results <- list()
 {chr(10).join(metric_lines)}
@@ -424,8 +439,9 @@ def recompute_muxviz_results(
     )
     try:
         runner.run_r_script(script)
-    except BaseException:
-        return existing_results
+    except BaseException as e:
+        print("Muxviz recompute failed:", e)
+        raise
 
     if output_path.exists():
         with open(output_path) as f:

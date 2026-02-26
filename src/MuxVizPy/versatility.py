@@ -350,6 +350,8 @@ def compute_katz_centrality(
     spectral_radius = float(np.abs(lam)) 
     alpha = (1-EPS) / spectral_radius
 
+    # todo: warning if NL>SIZE_MAX or nnz > SIZE_MAX
+
     if approx:
         x = np.random.randn(adj.shape[0])
         for i in range(approx_args.get("maxiter", 1000)):

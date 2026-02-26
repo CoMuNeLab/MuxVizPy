@@ -1,6 +1,7 @@
 import numpy as np
 import graph_tool as gt
-from .build import *
+from .build import get_aggregate_network
+from .utils.parsing import get_node_tensor_from_network_list
 from .versatility import *
 
 def get_percolation(

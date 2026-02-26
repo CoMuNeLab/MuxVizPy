@@ -1,5 +1,6 @@
 from MuxVizPy import build
 from MuxVizPy import versatility
+from MuxVizPy.utils import parsing as parsing_utils
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,7 +9,7 @@ import graph_tool as gt
 
 def Visualize_EdgeColoredNet(net, n_nodes=30, centr=None, pos_idx="agg", azim=10, elev=20, n_pow=3):
     np.random.seed(1432)
-    node_tensor = build.get_node_tensor_from_network_list(net.g_list)
+    node_tensor = parsing_utils.get_node_tensor_from_network_list(net.g_list)
     if centr==None:
         centr = versatility.get_multi_RW_centrality_edge_colored(node_tensor=node_tensor)
         top_nodes = centr.sort_values("vers", ascending=False).head(n_nodes)["phy nodes"].to_numpy()

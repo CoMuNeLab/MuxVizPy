@@ -9,7 +9,11 @@ from functools import reduce
 from tqdm import tqdm
 
 from .leading_eigenv_approx import leading_eigenv_approx
-from .build import *
+from .build import get_aggregate_network
+from .utils.parsing import (
+    get_node_tensor_from_network_list,
+    supra_adjacency_to_network_list,
+)
 
 def get_multi_LCC(obj: list[gt.Graph] | list[sps.spmatrix], obj_type: str = "glist") -> np.ndarray:
     """

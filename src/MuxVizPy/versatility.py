@@ -696,7 +696,7 @@ def get_multi_degree(
     """
     if backend == "hornet":
         return compute_multi_degree(supra, nodes, layers, is_directed=is_directed, logger=logger)
-    tensor = build.get_node_tensor_from_supra_adjacency(supra, layers, nodes)
+    tensor = parsing_utils.build_edge_colored_matrices_from_supra_adjacency_matrix(supra, layers)
     agg_mat = build.get_aggregate_network(tensor, return_mat=True)
     centrality_vector = np.array(agg_mat.sum(axis=0)).ravel()
     return centrality_vector
@@ -720,10 +720,10 @@ def get_multi_RW_centrality_edge_colored(node_tensor: list[sps.spmatrix], cval: 
     nodes = node_tensor[0].shape[0]
     layers = len(node_tensor)
     #create a supra adjacency matrix without interlayer connections
-    supra = build.build_supra_adjacency_matrix_from_edge_colored_matrices(nodes_tensor=node_tensor,
-                                                                    layer_tensor=np.zeros([layers,layers]),
-                                                                    layers=layers,
-                                                                    nodes=nodes)
+    supra = parsing_utils.build_supra_adjacency_matrix_from_edge_colored_matrices(
+                                                                    intra_networks=node_tensor,
+                                                                    layer_coupling_matrix=sps.csr_matrix((layers,layers)),
+                                                                    num_nodes=nodes)
     #compute the degree for each replica node
     supra_strength = supra.sum(axis=1).flatten()
     #take the inverse to normalize the probabilities
@@ -764,7 +764,7 @@ def get_multi_Kcore_centrality(supra: sps.spmatrix, layers: int, nodes: int):
     """
     #calculate centrality in each layer separately and then get the max per node
     kcore_table = np.zeros([nodes,layers])
-    nodes_tensor = build.get_node_tensor_from_supra_adjacency(supra, layers, nodes)
+    nodes_tensor = parsing_utils.build_edge_colored_matrices_from_supra_adjacency_matrix(supra, layers)
 
     for l in range(layers):
         g_tmp = gt.Graph(directed=False)

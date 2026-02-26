@@ -79,10 +79,10 @@ def compute_js_divergence(
     De Domenico et al. (2015) "Structural reducibility of multilayer networks",
     Nature Communications, 6, 6864.
     """
-    from .build import build_density_matrix
+    from .utils.parsing import build_density_bgs_from_adjacency_matrix
 
-    rho = build_density_matrix(adj1)
-    sigma = build_density_matrix(adj2)
+    rho = build_density_bgs_from_adjacency_matrix(adj1)
+    sigma = build_density_bgs_from_adjacency_matrix(adj2)
     M = (rho + sigma) * 0.5
 
     entropy_M = compute_vn_entropy(M)

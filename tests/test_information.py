@@ -14,7 +14,10 @@ Classes:
 import pytest
 import numpy as np
 import scipy.sparse as sp
-from MuxVizPy.build import get_node_tensor_from_supra_adjacency, build_density_matrix
+from MuxVizPy.utils.parsing import (
+    build_edge_colored_matrices_from_supra_adjacency_matrix,
+    build_density_bgs_from_adjacency_matrix as build_density_matrix,
+)
 from MuxVizPy.information import compute_vn_entropy, compute_js_divergence
 from conftest import compare_metrics
 
@@ -33,7 +36,7 @@ def net_layer_adjs(net_adjacency, net_n, net_l):
     This matches the requirement of muxViz's GetRenyiEntropyFromAdjacencyMatrix,
     which needs a symmetric input to guarantee real eigenvalues.
     """
-    tensor = get_node_tensor_from_supra_adjacency(net_adjacency, net_l, net_n)
+    tensor = build_edge_colored_matrices_from_supra_adjacency_matrix(net_adjacency, net_l)
     result = []
     for adj in tensor:
         sym = (adj + adj.T).tocsr()

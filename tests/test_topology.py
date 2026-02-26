@@ -15,7 +15,10 @@ import numpy as np
 import scipy.sparse as sp
 import graph_tool as gt
 from MuxVizPy import topology
-from MuxVizPy.build import supra_adjacency_to_network_list, get_node_tensor_from_supra_adjacency
+from MuxVizPy.utils.parsing import (
+    supra_adjacency_to_network_list,
+    build_edge_colored_matrices_from_supra_adjacency_matrix,
+)
 from conftest import compare_metrics
 
 
@@ -51,7 +54,7 @@ class TestTopologyCorrectness:
         assert len(result) <= net_n
 
     def test_lcc_glist_tensor_modes_agree(self, net_adjacency, net_n, net_l, net_glist):
-        tensor = get_node_tensor_from_supra_adjacency(net_adjacency, net_l, net_n)
+        tensor = build_edge_colored_matrices_from_supra_adjacency_matrix(net_adjacency, net_l)
         r_glist = topology.get_multi_LCC(net_glist, obj_type="glist")
         r_tensor = topology.get_multi_LCC(tensor, obj_type="tensor")
         np.testing.assert_array_equal(np.sort(r_glist), np.sort(r_tensor))

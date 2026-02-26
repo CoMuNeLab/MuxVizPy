@@ -11,46 +11,6 @@ import graph_tool.spectral
 
 from .leading_eigenv_approx import leading_eigenv_approx
 
-def speye(n: int) -> sps.spmatrix:
-    """Return a sparse identity matrix of size n in CSR format."""
-    return sps.eye(n, format="csr")
-
-def build_layers_tensor(Layers: int, OmegaParameter: float, MultisliceType: str) -> sps.spmatrix:
-    """
-    Constructs the inter-layer coupling matrix for a multilayer network.
-
-    Parameters
-    ----------
-    Layers : int
-        Number of layers.
-    OmegaParameter : float
-        Weight of inter-layer connections.
-    MultisliceType : str
-        Type of multilayer structure. Can be:
-        - "ordered": chain coupling (undirected)
-        - "categorical": all-to-all undirected coupling
-        - "temporal": directed chain coupling
-
-    Returns
-    -------
-    scipy.sparse.csr_matrix
-        Sparse matrix describing inter-layer connections.
-    """
-    MultisliceType = MultisliceType.lower()
-    M = sps.csr_matrix((Layers, Layers))
-    if Layers > 1:
-        if MultisliceType == "ordered":
-            M = (sps.diags([np.ones(Layers-1), np.ones(Layers-1)], [1, -1]))*OmegaParameter
-        elif MultisliceType == "categorical":
-            M = (np.ones((Layers, Layers)) - np.eye(Layers))*OmegaParameter
-        elif MultisliceType == "temporal":
-            M = sps.diags([np.ones(Layers-1)], [1])*OmegaParameter
-    else:
-        M = 0
-        print("--> Algorithms for one layer will be used")
-    return M
-
-
 def build_supra_adjacency_matrix_from_edge_colored_matrices(
     nodes_tensor: list[sps.spmatrix], 
     layer_tensor: sps.spmatrix, 
@@ -77,7 +37,7 @@ def build_supra_adjacency_matrix_from_edge_colored_matrices(
         Supra-adjacency matrix in block form.
     """
 
-    identity_mat = speye(nodes)
+    identity_mat = sps.eye(nodes, format="csr")
     M = sps.block_diag(nodes_tensor)+sps.kron(layer_tensor, identity_mat)
     return M
 
@@ -256,39 +216,6 @@ def supra_adjacency_to_network_list(
     g_list = node_tensor_to_network_list(node_tensor, layers, nodes)
     return g_list
     
-
-def get_laplacian_matrix(g: gt.Graph) -> sps.spmatrix:
-    """
-    Compute the Laplacian matrix of a graph-tool graph.
-
-    Parameters
-    ----------
-    g : graph_tool.Graph
-        Input network.
-
-    Returns
-    -------
-    scipy.sparse matrix
-        Laplacian matrix in sparse format.
-
-    Raises
-    ------
-    ValueError
-        If Laplacian matrix rows do not sum to 0.
-    """
-    adj_mat = gt.spectral.adjacency(g)
-    N = adj_mat.shape[0]
-    u = sps.coo_matrix(np.ones([N,1]))
-    
-    adj_dot = adj_mat.dot(u)
-    
-    lap_mat = sps.diags(adj_dot.toarray().flatten())-adj_mat
-    
-    if ((lap_mat.dot(u)).sum())>1e-8:
-        raise ValueError("ERROR! The Laplacian matrix has rows that don't sum to 0. Aborting process.")
-    
-    lap_mat.eliminate_zeros()
-    return lap_mat
 
 def build_supra_transition_matrix_from_supra_adjacency_matrix(
     supra: sps.spmatrix, layers: int, nodes: int, Type: str = "classical"

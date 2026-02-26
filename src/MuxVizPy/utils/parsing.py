@@ -177,6 +177,34 @@ def build_edge_colored_matrices_from_supra_adjacency_matrix(supra_adj: sp.csr_ma
         intra_networks.append(supra_adj[start:end, start:end].tocsr())
     return intra_networks
 
+def get_node_tensor_from_network_list(glist: list[gt.Graph]) -> list[sp.spmatrix]:
+    """
+    Convert a list of graph-tool graphs to their scipy sparse adjacency matrices.
+    Args:
+        glist: List of graph-tool Graph objects, one per layer.
+    Returns:
+        List of scipy sparse adjacency matrices, one per layer.
+    """
+    return [gt.spectral.adjacency(g) for g in glist]
+
+def supra_adjacency_to_network_list(supra: sp.spmatrix, num_layers: int, num_nodes: int) -> list[gt.Graph]:
+    """
+    Convert a supra-adjacency matrix into a list of graph-tool graphs (one per layer).
+    Args:
+        supra: Supra-adjacency matrix of shape (num_layers*num_nodes, num_layers*num_nodes).
+        num_layers: Number of layers.
+        num_nodes: Number of nodes per layer.
+    Returns:
+        List of graph-tool Graph objects, one per layer.
+    """
+    intra_networks = build_edge_colored_matrices_from_supra_adjacency_matrix(supra, num_layers)
+    graphs = []
+    for adj in intra_networks:
+        g = gt.Graph(directed=False)
+        g.add_edge_list(np.transpose(adj.nonzero()))
+        graphs.append(g)
+    return graphs
+
 def build_tensor_from_list_of_graphs(glist: list[gt.Graph]) -> torch.Tensor:
     """
     Build a tensor from a list of Graphs representing the layers of a multi-layer network.
@@ -658,4 +686,7 @@ def build_density_bgs_from_adjacency_matrix(
         adj = adj.tocsr(copy=False)
 
     den = build_laplacian_matrix_from_adjacency_matrix(adj)
-    return den / den.diagonal().sum()
+    trace = den.diagonal().sum()
+    if trace == 0:
+        raise ValueError("Adjacency matrix has no edges; Laplacian trace is zero.")
+    return den / trace

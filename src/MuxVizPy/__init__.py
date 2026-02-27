@@ -15,8 +15,7 @@ Modules
 - percolation:    Vertex percolation analysis
 - mesoscale:      SBM modularity and inter-layer correlations
 - utils:          IO utilities and node-name access
-- plotMux:        3D multiplex plotting
-- visualization:  Centrality-based 3D edge-colored layouts
+- visualization:  3D multiplex plotting and centrality-based edge-colored layouts
 """
 
 from .core import VirusMultiplex, VirusMultiplex_from_dirlist
@@ -25,7 +24,7 @@ import importlib
 __all__ = [
     "VirusMultiplex", "VirusMultiplex_from_dirlist",
     "build","versatility","topology","mesoscale","percolation","global_descriptors",
-    "utils","leading_eigenv_approx","plotMux","visualization"
+    "utils","leading_eigenv_approx","visualization"
 ]
 
 def __getattr__(name):

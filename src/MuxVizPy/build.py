@@ -9,7 +9,6 @@ import graph_tool.clustering as gtclust
 from typing import Union, List
 import graph_tool.spectral
 
-from .leading_eigenv_approx import leading_eigenv_approx
 
 def build_supra_adjacency_matrix_from_edge_colored_matrices(
     nodes_tensor: list[sps.spmatrix], 

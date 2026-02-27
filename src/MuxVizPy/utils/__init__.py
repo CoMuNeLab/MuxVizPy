@@ -6,6 +6,7 @@ __all__ = [
     "io",
     "misc",
     "parsing",
+    "approx_utils",
     "writeComponent",
     "readComponent",
     "get_names",

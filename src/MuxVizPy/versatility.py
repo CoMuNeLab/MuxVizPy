@@ -10,8 +10,8 @@ import graph_tool.clustering as gtclust
 import logging
 from typing import Optional
 
-from MuxVizPy import leading_eigenv_approx
-from MuxVizPy.leading_eigenv_approx import get_largest_eigenvalue, approximate_largest_eigenvalue
+from MuxVizPy.utils import approx_utils
+from MuxVizPy.utils.approx_utils import get_largest_eigenvalue, approximate_largest_eigenvalue
 from MuxVizPy import build
 from MuxVizPy.utils import parsing as parsing_utils
 
@@ -738,7 +738,7 @@ def get_multi_RW_centrality_edge_colored(node_tensor: list[sps.spmatrix], cval: 
     supra_transition = supra_transition[nonzero_idx]
     supra_transition = supra_transition[:,nonzero_idx]
     #compute the leading eigenvector with the approximation methos
-    eig,pr_v = leading_eigenv_approx.leading_eigenv_approx(supra_transition.T, max_iter=10000, tol=1e-8, cval=0.15)
+    eig,pr_v = approx_utils.leading_eigenv_approx(supra_transition.T, max_iter=10000, tol=1e-8, cval=0.15)
     #aggregate by summing together probabilities corresponding to the same physical node to have the final result
     res_df = pd.DataFrame({"phy nodes": nonzero_idx-((nonzero_idx//nodes)*nodes), "vers": pr_v/max(pr_v)})
 

@@ -8,7 +8,6 @@ import graph_tool.clustering as gtclust
 from functools import reduce
 from tqdm import tqdm
 
-from .leading_eigenv_approx import leading_eigenv_approx
 from .build import get_aggregate_network
 from .utils.parsing import (
     get_node_tensor_from_network_list,

@@ -4,8 +4,6 @@ HORNET.md
 src/MuxVizPy.egg-info/
 .venv/
 
-.gitignore
-
 **/*.pyc
 **/__pycache__/
 

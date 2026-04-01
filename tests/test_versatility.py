@@ -156,7 +156,7 @@ class TestVersatilityCorrectness:
         assert ec.max() == pytest.approx(1.0, abs=1e-6)
 
     def test_compute_katz_centrality_exact_shape(self, net_interaction, net_n, net_l):
-        katz, eigenvalue = versatility.compute_katz_centrality(net_interaction, net_n, net_l, approx=False)
+        katz, eigenvalue = versatility.compute_katz_centrality(net_interaction, net_n, net_l, approx=False, return_eigenvalue=True)
         assert katz.shape == (net_n,)
         assert katz.max() == pytest.approx(1.0, abs=1e-6)
         assert isinstance(eigenvalue, float)
@@ -166,6 +166,7 @@ class TestVersatilityCorrectness:
         katz, eigenvalue = versatility.compute_katz_centrality(
             net_interaction, net_n, net_l, approx=True,
             approx_args={"maxiter": 5000, "tol": 1e-8},
+            return_eigenvalue=True
         )
         assert katz.shape == (net_n,)
         assert katz.max() == pytest.approx(1.0, abs=1e-6)
@@ -253,16 +254,17 @@ class TestVersatilityReference:
     # --- centrality reference tests ---------------------------------------
 
     def test_katz_exact_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
-        computed, _ = versatility.compute_katz_centrality(net_interaction, net_n, net_l, approx=False)
+        computed = versatility.compute_katz_centrality(net_interaction, net_n, net_l, approx=False, return_eigenvalue=False)
         # muxviz reference is rounded to 4 dp → need atol >= 5e-4
         compare_metrics(computed, net_muxviz_results["katz"], "Katz exact (vs muxViz R)",
                         rtol=5e-4, atol=5e-4)
 
     def test_katz_approx_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
         np.random.seed(42)
-        computed, _ = versatility.compute_katz_centrality(
+        computed = versatility.compute_katz_centrality(
             net_interaction, net_n, net_l, approx=True,
             approx_args={"maxiter": 10000, "tol": 1e-10},
+            return_eigenvalue=False
         )
         compare_metrics(computed, net_muxviz_results["katz"], "Katz approx (vs muxViz R)",
                          rtol=0.05, atol=0.05)

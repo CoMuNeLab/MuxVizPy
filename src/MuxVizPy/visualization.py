@@ -1,4 +1,3 @@
-from MuxVizPy import build
 from MuxVizPy import versatility
 from MuxVizPy.utils import parsing as parsing_utils
 
@@ -28,7 +27,7 @@ def Visualize_EdgeColoredNet(net, n_nodes=30, centr=None, pos_idx="agg", azim=10
         gf_list.append(gt.Graph(gw, prune=True))
 
     if pos_idx=="agg":
-        g_agg = build.get_aggregate_network(gf_list, obj_type="glist")
+        g_agg = parsing_utils.get_aggregate_network(gf_list, obj_type="glist")
         positions = gt.draw.sfdp_layout(g_agg).get_2d_array([0,1])
     else:
         positions = gt.draw.sfdp_layout(gf_list[pos_idx]).get_2d_array([0,1])

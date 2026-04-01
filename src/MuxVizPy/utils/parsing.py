@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import polars as pl
 import scipy.sparse as sp
 import numpy as np
 import typing
 import logging
+import pandas as pd
 import graph_tool as gt
 import graph_tool.spectral
 
@@ -690,3 +693,200 @@ def build_density_bgs_from_adjacency_matrix(
     if trace == 0:
         raise ValueError("Adjacency matrix has no edges; Laplacian trace is zero.")
     return den / trace
+
+
+def get_aggregate_network(
+    obj: list[sp.spmatrix] | list[gt.Graph],
+    obj_type: str = "tensor",
+    return_mat: bool = False,
+    binarize: bool = True,
+) -> sp.spmatrix | gt.Graph:
+    """
+    Aggregate multilayer networks into a single network.
+
+    Parameters
+    ----------
+    obj : list
+        List of networks, either as Graph objects or adjacency matrices.
+    obj_type : str, optional
+        Format of `obj`: "tensor" or "glist" (default: "tensor").
+    return_mat : bool, optional
+        If True, return adjacency matrix (default: False).
+    binarize : bool, optional
+        If True, edge weights are binarized.
+
+    Returns
+    -------
+    graph_tool.Graph or scipy.sparse matrix
+        Aggregate network.
+    """
+    if obj_type == "glist":
+        obj = get_node_tensor_from_network_list(obj)
+
+    agg_mat = sp.coo_matrix(obj[0].shape)
+    for layer in obj:
+        agg_mat += layer
+
+    if binarize:
+        agg_mat[agg_mat > 0] = 1
+
+    if return_mat:
+        return agg_mat
+
+    g_agg = gt.Graph(directed=False)
+    g_agg.add_edge_list(np.transpose(agg_mat.nonzero()))
+    g_agg.add_vertex(agg_mat.shape[0] - g_agg.num_vertices())
+    return g_agg
+
+
+def supra_adjacency_to_block_tensor(
+    supra: sp.spmatrix, layers: int, nodes: int
+) -> list[list[sp.spmatrix]]:
+    """
+    Convert supra-adjacency matrix to block tensor format.
+
+    Parameters
+    ----------
+    supra : scipy.sparse matrix
+        Supra-adjacency matrix.
+    layers : int
+        Number of layers.
+    nodes : int
+        Number of nodes.
+
+    Returns
+    -------
+    list of lists
+        Block tensor [layers x layers] of adjacency submatrices.
+    """
+    return [
+        [supra[i * nodes:(i + 1) * nodes, j * nodes:(j + 1) * nodes] for j in range(layers)]
+        for i in range(layers)
+    ]
+
+
+def node_tensor_to_network_list(
+    tensor: list[sp.spmatrix], layers: int, nodes: int
+) -> list[gt.Graph]:
+    """
+    Convert node-layer adjacency matrices into graph_tool graphs.
+
+    Parameters
+    ----------
+    tensor : list of scipy.sparse matrices
+        List of per-layer adjacency matrices.
+    layers : int
+        Number of layers.
+    nodes : int
+        Number of nodes.
+
+    Returns
+    -------
+    list of graph_tool.Graph
+        One graph per layer.
+    """
+    g_list = []
+    for i in range(layers):
+        g = gt.Graph(directed=False)
+        g.add_edge_list(np.transpose(tensor[i].nonzero()))
+        g_list.append(g)
+    return g_list
+
+
+def build_supra_adjacency_matrix_from_extended_edgelist(
+    dfEdges: pd.DataFrame, Layers: int, Nodes: int, isDirected: bool
+) -> sp.spmatrix:
+    """
+    Build supra-adjacency matrix from extended edge list.
+
+    Parameters
+    ----------
+    dfEdges : pandas.DataFrame
+        DataFrame with columns ["NodeIN", "LayerIN", "NodeOUT", "LayerOUT"].
+    Layers : int
+        Number of layers.
+    Nodes : int
+        Number of nodes.
+    isDirected : bool
+        Whether the graph is directed.
+
+    Returns
+    -------
+    scipy.sparse matrix
+        Supra-adjacency matrix.
+    """
+    if len(pd.unique(pd.concat([dfEdges["LayerIN"], dfEdges["LayerOUT"]]))) != Layers:
+        raise ValueError("Error: expected number of layers does not match the data. Aborting process.")
+
+    def supra_idx(node, layer):
+        return layer * Nodes + node
+
+    frm = supra_idx(dfEdges["NodeIN"].to_numpy(), dfEdges["LayerIN"].to_numpy())
+    to = supra_idx(dfEdges["NodeOUT"].to_numpy(), dfEdges["LayerOUT"].to_numpy())
+    w = np.ones(len(dfEdges), dtype=float)
+
+    order = Layers * Nodes
+    M = sp.coo_matrix((w, (frm, to)), shape=(order, order)).tocsr()
+
+    if not isDirected:
+        M = M + M.T
+
+    if abs((M - M.T).sum()) > 1e-12 and not isDirected:
+        raise ValueError("WARNING: The input data is directed but isDirected=FALSE, I am symmetrizing by average.")
+
+    return M
+
+
+def create_supra_transition_matrix_virus(
+    supra: sp.spmatrix,
+    node_tensor: list[sp.spmatrix],
+    nodes: int,
+    layers: int,
+    p_intra: float = 1,
+) -> sp.spmatrix:
+    """
+    Construct a custom supra-transition matrix mixing intra- and inter-layer dynamics.
+
+    Parameters
+    ----------
+    supra : scipy.sparse matrix
+        Supra adjacency matrix.
+    node_tensor : list of scipy.sparse matrices
+        Adjacency matrices per layer.
+    nodes : int
+        Number of nodes.
+    layers : int
+        Number of layers.
+    p_intra : float, optional
+        Weight for intra-layer contributions (default=1).
+
+    Returns
+    -------
+    scipy.sparse matrix
+        Row-normalized supra transition matrix.
+    """
+    supra_sum = np.array(supra.sum(axis=0).tolist()[0])
+
+    blocks = []
+    for l in range(layers):
+        block = sp.identity(nodes).multiply(supra_sum[l * nodes:(l + 1) * nodes] - (layers - 1))
+        blocks.append(block)
+
+    mat = []
+    for la in range(layers):
+        norm_fac = np.sum(supra_sum.reshape(layers, nodes)[np.delete(np.arange(layers), la)] - (layers - 1), axis=0)
+        norm_fac = np.where(norm_fac != 0, 1 / norm_fac, 0)
+        mat.append([blocks[i].multiply(norm_fac) for i in np.delete(np.arange(layers), la)])
+
+    diag_blocks = []
+    for la in range(layers):
+        t0_sum = np.array(list(node_tensor[la].sum(axis=0)))[0][0]
+        t0_sum = np.where(t0_sum != 0, 1 / t0_sum, 0)
+        diag_blocks.append(node_tensor[la].dot(sp.diags(t0_sum)).T)
+
+    for i in range(layers):
+        mat[i].insert(i, diag_blocks[i].multiply(np.array([p_intra] * nodes)))
+
+    comb_mat = sp.vstack([sp.hstack(mat[i]) for i in range(layers)])
+    valss = np.where(comb_mat.sum(axis=1) != 0, 1 / comb_mat.sum(axis=1), 0).flatten()
+    return comb_mat.T.multiply(valss).T

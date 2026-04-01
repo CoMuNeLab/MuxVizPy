@@ -8,7 +8,7 @@ import graph_tool.clustering as gtclust
 from functools import reduce
 from tqdm import tqdm
 
-from .build import get_aggregate_network
+from .utils.parsing import get_aggregate_network
 from .utils.parsing import (
     get_node_tensor_from_network_list,
     supra_adjacency_to_network_list,

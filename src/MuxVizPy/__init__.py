@@ -8,7 +8,6 @@ and mesoscale community detection using stochastic block models.
 Modules
 -------
 - core:           VirusMultiplex and VirusMultiplex_from_dirlist constructors
-- build:          Construction of supra-structures and tensors
 - versatility:    Multilayer centrality functions
 - global_descriptors: Global properties of multilayer networks
 - topology:       Connected components, LCC, LIC, LVC
@@ -19,16 +18,21 @@ Modules
 """
 
 from .core import VirusMultiplex, VirusMultiplex_from_dirlist
+from .utils.approx_utils import leading_eigenv_approx
 import importlib
 
+_LAZY_MODULES = [
+    "versatility", "topology", "mesoscale", "percolation",
+    "global_descriptors", "utils", "visualization",
+]
+
 __all__ = [
-    "VirusMultiplex", "VirusMultiplex_from_dirlist",
-    "build","versatility","topology","mesoscale","percolation","global_descriptors",
-    "utils","leading_eigenv_approx","visualization"
+    "leading_eigenv_approx",
+    *_LAZY_MODULES,
 ]
 
 def __getattr__(name):
-    if name in __all__:
+    if name in _LAZY_MODULES:
         mod = importlib.import_module(f".{name}", __name__)
         globals()[name] = mod
         return mod

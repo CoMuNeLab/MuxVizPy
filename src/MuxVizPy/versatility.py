@@ -12,7 +12,6 @@ from typing import Optional
 
 from MuxVizPy.utils import approx_utils
 from MuxVizPy.utils.approx_utils import get_largest_eigenvalue, approximate_largest_eigenvalue
-from MuxVizPy import build
 from MuxVizPy.utils import parsing as parsing_utils
 
 
@@ -370,6 +369,7 @@ def compute_katz_centrality(
     adj: sps.csr_matrix, n: int, l: int,
     approx: bool = False,
     approx_args: Optional[dict] = None,
+    return_eigenvalue: bool = False,
     logger: Optional[logging.Logger] = None,
 ) -> np.ndarray:
     """
@@ -440,7 +440,11 @@ def compute_katz_centrality(
     if logger and logger.isEnabledFor(logging.DEBUG):
         logger.debug("Katz: alpha=%.6g, lambda_max=%.6g, min/mean/max=%.4g/%.4g/%.4g",
                      alpha, lam, katz.min(), katz.mean(), katz.max())
-    return katz, eigenvalue
+        
+    if return_eigenvalue:
+        return katz, eigenvalue
+    else:
+        return katz
 
 
 def compute_multi_rw_centrality(
@@ -757,7 +761,7 @@ def get_multi_degree(
     if backend == "hornet":
         return compute_multi_degree(supra, nodes, layers, is_directed=is_directed, logger=logger)
     tensor = parsing_utils.build_edge_colored_matrices_from_supra_adjacency_matrix(supra, layers)
-    agg_mat = build.get_aggregate_network(tensor, return_mat=True)
+    agg_mat = parsing_utils.get_aggregate_network(tensor, return_mat=True)
     centrality_vector = np.array(agg_mat.sum(axis=0)).ravel()
     return centrality_vector
 

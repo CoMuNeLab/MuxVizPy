@@ -34,7 +34,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["MuxVizPy"]
+include = ["MuxVizPy", "MuxVizPy.*", "muxvizpy"]
 
 # ============================================================================
 # Optional Dependencies

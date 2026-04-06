@@ -13,6 +13,7 @@ from typing import Optional
 from MuxVizPy.utils import approx_utils
 from MuxVizPy.utils.approx_utils import get_largest_eigenvalue, approximate_largest_eigenvalue
 from MuxVizPy.utils import parsing as parsing_utils
+from MuxVizPy.utils.katz_utils import _solve_katz_system
 
 
 # ---------------------------------------------------------------------------
@@ -412,22 +413,14 @@ def compute_katz_centrality(
 
     # todo: warning if NL>SIZE_MAX or nnz > SIZE_MAX
 
+    I = sps.eye(NL, format="csc", dtype=np.float64)
+    Aop = I - alpha * adj.tocsc()
+    b = np.ones(NL, dtype=np.float64)
+
     if approx:
-        x = np.random.randn(adj.shape[0])
-        for i in range(approx_args.get("maxiter", 1000)):
-            x_new = alpha * adj @ x + np.ones(adj.shape[0])
-            # Compute the change in x and check for convergence
-            delta_x = np.linalg.norm(x_new - x)
-            if delta_x < approx_args.get("tol", 1e-6):
-                if logger and logger.isEnabledFor(logging.DEBUG):
-                    logger.debug("Reached convergence in Katz power iteration after %d iterations with delta %.3e", i + 1, delta_x)
-                break
-            # Update x for the next iteration
-            x = x_new
+        method = approx_args.get("method", "power")
+        x = _solve_katz_system(Aop, b, method, alpha, adj, approx_args, logger)
     else:
-        I = sps.eye(NL, format="csc", dtype=np.float64)
-        Aop = I - alpha * adj.tocsc()
-        b = np.ones(NL, dtype=np.float64)
         x = sps.linalg.spsolve(Aop, b)
 
     eigenvalue = (x.T @ adj @ x) / (x.T @ x) # Rayleigh quotient for the Katz operator

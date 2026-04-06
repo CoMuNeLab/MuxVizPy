@@ -217,6 +217,21 @@ class TestVersatilityCorrectness:
 
 
 # ============================================================================
+# Katz centrality agreement — approx vs exact and method dispatch
+# ============================================================================
+
+class TestKatzCentralityAgreement:
+    """Approx vs exact agreement and method-dispatch guard for Katz centrality."""
+
+    def test_katz_invalid_method_raises(self, net_interaction, net_n, net_l):
+        with pytest.raises(ValueError, match="Unknown method"):
+            versatility.compute_katz_centrality(
+                net_interaction, net_n, net_l, approx=True,
+                approx_args={"method": "invalid_solver"},
+            )
+
+
+# ============================================================================
 # Backend comparison — muxvizpy vs hornet
 # ============================================================================
 

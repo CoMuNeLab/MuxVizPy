@@ -17,7 +17,6 @@ Modules
 - visualization:  3D multiplex plotting and centrality-based edge-colored layouts
 """
 
-from .core import VirusMultiplex, VirusMultiplex_from_dirlist
 from .utils.approx_utils import leading_eigenv_approx
 import importlib
 

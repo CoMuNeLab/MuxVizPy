@@ -237,6 +237,16 @@ class TestKatzCentralityAgreement:
                 approx_args={"method": "power", "maxiter": 1, "tol": 1e-10},
             )
 
+    def test_katz_gmres_matches_direct(self, net_interaction, net_n, net_l):
+        exact = versatility.compute_katz_centrality(
+            net_interaction, net_n, net_l, approx=False,
+        )
+        gmres_result = versatility.compute_katz_centrality(
+            net_interaction, net_n, net_l, approx=True,
+            approx_args={"method": "gmres", "maxiter": 1000, "tol": 1e-8},
+        )
+        np.testing.assert_allclose(gmres_result, exact, atol=1e-3)
+
 
 # ============================================================================
 # Backend comparison — muxvizpy vs hornet

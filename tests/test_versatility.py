@@ -247,6 +247,16 @@ class TestKatzCentralityAgreement:
         )
         np.testing.assert_allclose(gmres_result, exact, atol=1e-3)
 
+    def test_katz_bicgstab_matches_direct(self, net_interaction, net_n, net_l):
+        exact = versatility.compute_katz_centrality(
+            net_interaction, net_n, net_l, approx=False,
+        )
+        bicgstab_result = versatility.compute_katz_centrality(
+            net_interaction, net_n, net_l, approx=True,
+            approx_args={"method": "bicgstab", "maxiter": 1000, "tol": 1e-8},
+        )
+        np.testing.assert_allclose(bicgstab_result, exact, atol=5e-4)
+
 
 # ============================================================================
 # Backend comparison — muxvizpy vs hornet

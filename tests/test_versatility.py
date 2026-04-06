@@ -230,6 +230,13 @@ class TestKatzCentralityAgreement:
                 approx_args={"method": "invalid_solver"},
             )
 
+    def test_katz_power_iter_warns_when_not_converged(self, net_interaction, net_n, net_l):
+        with pytest.warns(UserWarning, match="did not converge"):
+            versatility.compute_katz_centrality(
+                net_interaction, net_n, net_l, approx=True,
+                approx_args={"method": "power", "maxiter": 1, "tol": 1e-10},
+            )
+
 
 # ============================================================================
 # Backend comparison — muxvizpy vs hornet

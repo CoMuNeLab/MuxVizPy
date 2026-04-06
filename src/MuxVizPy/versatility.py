@@ -397,9 +397,6 @@ def compute_katz_centrality(
         Max-normalized Katz centrality per physical node, shape (n,).
     """
     EPS = 1e-5
-    if approx and approx_args is None:
-        approx_args = {"maxiter": 1000, "tol": 1e-6}
-
     NL = n * l
     if not sps.isspmatrix(adj):
         raise TypeError("adj must be a SciPy sparse matrix")
@@ -418,6 +415,8 @@ def compute_katz_centrality(
     b = np.ones(NL, dtype=np.float64)
 
     if approx:
+        if approx_args is None:
+            approx_args = {"maxiter": 1000, "tol": 1e-6}
         method = approx_args.get("method", "power")
         x = _solve_katz_system(Aop, b, method, alpha, adj, approx_args, logger)
     else:

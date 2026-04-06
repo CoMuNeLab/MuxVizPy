@@ -59,7 +59,7 @@ def _solve_katz_system(
         converged = False
         delta_x = float("inf")
         for i in range(maxiter):
-            x_new = alpha * adj @ x + np.ones(NL)
+            x_new = alpha * adj @ x + b
             delta_x = np.linalg.norm(x_new - x)
             x = x_new
             if delta_x < tol:
@@ -82,11 +82,14 @@ def _solve_katz_system(
         ilu = spla.spilu(Aop)
         M = spla.LinearOperator(Aop.shape, ilu.solve)
         solver_fn = spla.gmres if method == "gmres" else spla.bicgstab
-        x, info = solver_fn(Aop, b, M=M, tol=tol, maxiter=maxiter)
+        x, info = solver_fn(Aop, b, M=M, rtol=tol, maxiter=maxiter)
         if info != 0:
+            if info > 0:
+                detail = f"did not converge within {maxiter} iterations"
+            else:
+                detail = f"encountered a breakdown (info={info})"
             warnings.warn(
-                f"Katz {method} solver did not converge (info={info}). "
-                "Result may be inaccurate.",
+                f"Katz {method} solver {detail}. Result may be inaccurate.",
                 UserWarning,
                 stacklevel=3,
             )

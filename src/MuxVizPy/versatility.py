@@ -389,6 +389,17 @@ def compute_katz_centrality(
         Number of nodes.
     l : int
         Number of layers.
+    approx : bool, optional
+        If True, use an iterative solver instead of a direct sparse solve.
+    approx_args : dict, optional
+        Arguments forwarded to the iterative solver. Supported keys:
+
+        - ``"method"`` : str — solver to use. One of ``"power"`` (default,
+          Neumann series power iteration), ``"gmres"``, or ``"bicgstab"``.
+        - ``"maxiter"`` : int — maximum number of iterations (default 1000).
+        - ``"tol"`` : float — convergence tolerance (default 1e-6).
+    return_eigenvalue : bool, optional
+        If True, also return the Rayleigh-quotient eigenvalue estimate.
     logger : logging.Logger, optional
 
     Returns

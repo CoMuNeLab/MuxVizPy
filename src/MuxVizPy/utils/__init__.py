@@ -4,7 +4,7 @@ import importlib
 
 from .misc import writeComponent, readComponent, get_names
 
-_LAZY_SUBMODULES = ["io", "misc", "parsing", "approx_utils"]
+_LAZY_SUBMODULES = ["io", "misc", "parsing", "approx_utils", "katz_utils"]
 
 __all__ = [
     *_LAZY_SUBMODULES,

@@ -11,9 +11,9 @@ import logging
 from typing import Optional
 
 from MuxVizPy.utils import approx_utils
-from MuxVizPy.utils.approx_utils import get_largest_eigenvalue, approximate_largest_eigenvalue
+from MuxVizPy.utils.approx_utils import get_largest_magnitude_eigenvalue, get_largest_real_eigenvalue, approximate_largest_eigenvalue
 from MuxVizPy.utils import parsing as parsing_utils
-from MuxVizPy.utils.katz_utils import _solve_katz_system
+from MuxVizPy.utils.katz_utils import _katz_neumann, _katz_krylov, _VALID_SOLVERS
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +353,7 @@ def compute_eigenvector_centrality(adj: sps.csr_matrix, n: int, l: int, logger: 
         raise ValueError(f"Adjacency matrix shape {adj.shape} != ({NL}, {NL})")
 
     AT = adj.transpose().tocsc()
-    lam, lvec = get_largest_eigenvalue(AT, logger=logger)
+    lam, lvec = get_largest_magnitude_eigenvalue(AT, logger=logger)
 
     X = np.reshape(lvec, (n, l), order="F")
     eig_centrality = X.sum(axis=1)
@@ -368,44 +368,88 @@ def compute_eigenvector_centrality(adj: sps.csr_matrix, n: int, l: int, logger: 
 
 def compute_katz_centrality(
     adj: sps.csr_matrix, n: int, l: int,
-    approx: bool = False,
-    approx_args: Optional[dict] = None,
+    *,
+    solver: str = "direct",
+    maxiter: int = 10000,
+    tol: float = 1e-6,
     return_eigenvalue: bool = False,
     logger: Optional[logging.Logger] = None,
 ) -> np.ndarray:
     """
     Compute multi-layer Katz centrality.
 
-    Solves (I - a * A) x = 1 with a = (1-EPS) / spectral_radius(A), then
-    reshapes x to (n, l) in column-major order and sums across layers.
+    Katz centrality is defined as the solution x of
 
-    Solves by direct sparse linear solve or by power iteration if approx=True.
+        (I - alpha * A) x = 1,
+
+    with ``alpha = (1 - EPS) / rho(A)``, where ``rho(A)`` is the spectral
+    radius of the supra-adjacency matrix ``A``. The vector x is then reshaped
+    to ``(n, l)`` in column-major order, summed across layers to aggregate
+    replicas, and max-normalized so that the largest score equals 1.
+
+    Four solvers are available via the ``solver`` keyword:
+
+    - ``"direct"`` *(default, exact)*: sparse LU factorization of
+      ``Aop = I - alpha * A`` via ``scipy.sparse.linalg.spsolve``.
+      Most accurate but does not exploit the spectral-radius bound and has
+      the highest memory cost.
+    - ``"neumann"`` *(stationary iterative)*: Richardson / Neumann-series
+      fixed-point iteration ``x_{k+1} = alpha * A @ x_k + b`` which unrolls
+      to ``sum_k (alpha*A)^k b``. Needs only matvecs with ``adj`` and never
+      materializes ``Aop``. Converges unconditionally because Katz forces
+      ``rho(alpha*A) = 1 - EPS < 1`` by construction, although convergence
+      can be slow when ``EPS`` is small.
+    - ``"gmres"``, ``"bicgstab"`` *(Krylov iterative)*: Krylov subspace
+      solvers applied to ``Aop``, preconditioned by an incomplete-LU
+      factorization (``spilu``). Typically faster than the Neumann branch
+      when ``Aop`` is ill-conditioned.
 
     Parameters
     ----------
     adj : scipy.sparse matrix
-        Supra-adjacency matrix of shape (n*l, n*l).
+        Supra-adjacency matrix of shape ``(n*l, n*l)``.
     n : int
-        Number of nodes.
+        Number of physical nodes.
     l : int
         Number of layers.
-    approx : bool, optional
-        If True, use an iterative solver instead of a direct sparse solve.
-    approx_args : dict, optional
-        Arguments forwarded to the iterative solver. Supported keys:
-
-        - ``"method"`` : str — solver to use. One of ``"power"`` (default,
-          Neumann series power iteration), ``"gmres"``, or ``"bicgstab"``.
-        - ``"maxiter"`` : int — maximum number of iterations (default 1000).
-        - ``"tol"`` : float — convergence tolerance (default 1e-6).
-    return_eigenvalue : bool, optional
-        If True, also return the Rayleigh-quotient eigenvalue estimate.
+    solver : {"direct", "neumann", "gmres", "bicgstab"}, default ``"direct"``
+        Linear solver used to invert ``(I - alpha * A)``. See the function
+        description for the trade-offs of each branch.
+    maxiter : int, default 1000
+        Maximum iterations for iterative solvers. Ignored when
+        ``solver="direct"``.
+    tol : float, default 1e-6
+        Convergence tolerance for iterative solvers (passed as ``rtol`` to
+        the scipy Krylov solvers and as the L2 step size for Neumann).
+        Ignored when ``solver="direct"``.
+    return_eigenvalue : bool, default False
+        If True, also return the Rayleigh quotient ``x^T A x / x^T x`` as
+        an estimate of the dominant eigenvalue associated with the solution.
     logger : logging.Logger, optional
+        If provided, logs diagnostics at DEBUG level (eigenvalue, alpha,
+        iteration count for the Neumann branch).
 
     Returns
     -------
-    np.ndarray
-        Max-normalized Katz centrality per physical node, shape (n,).
+    katz : np.ndarray, shape (n,)
+        Max-normalized Katz centrality per physical node, ``float32``.
+    eigenvalue : float, optional
+        Rayleigh quotient estimate. Returned only when
+        ``return_eigenvalue=True``.
+
+    Raises
+    ------
+    TypeError
+        If ``adj`` is not a SciPy sparse matrix.
+    ValueError
+        If ``adj.shape != (n*l, n*l)`` or if ``solver`` is not one of the
+        supported values.
+
+    Notes
+    -----
+    The ``"neumann"`` branch initializes its iterate from
+    ``np.random.randn``; seed the global NumPy RNG before calling for
+    reproducibility.
     """
     EPS = 1e-5
     NL = n * l
@@ -413,25 +457,30 @@ def compute_katz_centrality(
         raise TypeError("adj must be a SciPy sparse matrix")
     if adj.shape != (NL, NL):
         raise ValueError(f"Adjacency matrix shape {adj.shape} != ({NL}, {NL})")
+    if solver not in _VALID_SOLVERS:
+        raise ValueError(
+            f"Unknown solver {solver!r}. Valid options: {_VALID_SOLVERS}"
+        )
 
-    lam, _ = get_largest_eigenvalue(adj, logger=logger)
+    lam, _ = get_largest_magnitude_eigenvalue(adj, logger=logger)
 
-    spectral_radius = float(np.abs(lam)) 
-    alpha = (1-EPS) / spectral_radius
+    spectral_radius = float(np.abs(lam))
+    alpha = (1 - EPS) / spectral_radius
+    # IMPORTANT - we choose this alpha because of MUXVIZ. EVEN if it has some issues.
 
-    # todo: warning if NL>SIZE_MAX or nnz > SIZE_MAX
-
-    I = sps.eye(NL, format="csc", dtype=np.float64)
-    Aop = I - alpha * adj.tocsc()
     b = np.ones(NL, dtype=np.float64)
 
-    if approx:
-        if approx_args is None:
-            approx_args = {"maxiter": 1000, "tol": 1e-6}
-        method = approx_args.get("method", "power")
-        x = _solve_katz_system(Aop, b, method, alpha, adj, approx_args, logger)
+    if solver == "neumann":
+        # Neumann power iteration
+        x = _katz_neumann(adj, alpha, b, maxiter=maxiter, tol=tol, logger=logger)
     else:
-        x = sps.linalg.spsolve(Aop, b)
+        # Direct and Krylov branches both need the explicit operator Aop.
+        I = sps.eye(NL, format="csc", dtype=np.float64)    
+        Aop = I - alpha * adj.tocsc()
+        if solver == "direct":
+            x = sps.linalg.spsolve(Aop, b)
+        else:  # "gmres" or "bicgstab"
+            x = _katz_krylov(Aop, b, method=solver, maxiter=maxiter, tol=tol)
 
     eigenvalue = (x.T @ adj @ x) / (x.T @ x) # Rayleigh quotient for the Katz operator
 
@@ -645,7 +694,7 @@ def compute_multi_hub_centrality(
                 maxiter=approx_args.get("maxiter", 1000),
                 tol=approx_args.get("tol", 1e-6))
         else:
-            eigenval, eigenvec = get_largest_eigenvalue(AA, logger=logger)
+            eigenval, eigenvec = get_largest_real_eigenvalue(AA, logger=logger)
         hc = eigenvec.reshape((l, n)).sum(axis=0)
         hc = hc / hc.max()
         maxv = hc.max() if hc.size else 0.0
@@ -714,7 +763,7 @@ def compute_multi_authority_centrality(
                 maxiter=approx_args.get("maxiter", 1000),
                 tol=approx_args.get("tol", 1e-6))
         else:
-            eigenval, eigenvec = get_largest_eigenvalue(AAT, logger=logger)
+            eigenval, eigenvec = get_largest_real_eigenvalue(AAT, logger=logger)
         X = np.reshape(eigenvec, (n, l), order="F")
         authority_centrality = X.sum(axis=1)
         maxv = authority_centrality.max() if authority_centrality.size else 0.0

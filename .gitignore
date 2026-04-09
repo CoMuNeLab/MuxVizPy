@@ -13,5 +13,6 @@ container/*.def
 tests/data/
 docs/manuscript
 docs/resources
+docs/superpowers/
 
 scripts/

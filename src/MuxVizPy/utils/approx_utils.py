@@ -11,7 +11,7 @@ import logging
 from typing import Optional, Union, List
 
 
-def get_largest_eigenvalue(adj: sps.spmatrix, logger: Optional[logging.Logger] = None) -> tuple[float, np.ndarray]:
+def get_largest_magnitude_eigenvalue(adj: sps.spmatrix, logger: Optional[logging.Logger] = None) -> tuple[float, np.ndarray]:
     """
     Compute the largest eigenvalue and corresponding eigenvector of a sparse matrix.
 
@@ -28,6 +28,49 @@ def get_largest_eigenvalue(adj: sps.spmatrix, logger: Optional[logging.Logger] =
         (largest eigenvalue, corresponding eigenvector)
     """
     eigvals, eigvecs = sps.linalg.eigs(adj, k=1, which="LM", return_eigenvectors=True)
+    real_mask = np.abs(np.imag(eigvals)) < 1e-6
+
+    if not np.any(real_mask):
+        if logger:
+            logger.warning("Warning! Complex numbers in the leading eigenvalue.")
+        lam = float(np.real(eigvals[0]))
+        vec = np.real(eigvecs[:, 0])
+    else:
+        lam = float(np.real(eigvals[0]))
+        vec = np.real(eigvecs[:, 0])
+
+    if not np.allclose(np.imag(vec), 0):
+        if logger:
+            logger.warning("Warning! Complex numbers in the leading eigenvector.")
+
+    vec[(vec > -1e-12) & (vec < 1e-12)] = 0.0
+
+    non_zero_vec = vec[vec != 0]
+    if len(non_zero_vec) > 0 and np.all(non_zero_vec < 0):
+        vec = -vec
+
+    if logger and logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Largest eigenvalue: {lam}, eigenvector min: {vec.min()}, max: {vec.max()}, mean: {vec.mean()}")
+
+    return lam, vec
+
+def get_largest_real_eigenvalue(adj: sps.spmatrix, logger: Optional[logging.Logger] = None) -> tuple[float, np.ndarray]:
+    """
+    Compute the largest eigenvalue and corresponding eigenvector of a sparse matrix.
+
+    Parameters
+    ----------
+    adj : scipy.sparse matrix
+        Adjacency matrix.
+    logger : logging.Logger, optional
+        Logger for debug information.
+
+    Returns
+    -------
+    tuple
+        (largest eigenvalue, corresponding eigenvector)
+    """
+    eigvals, eigvecs = sps.linalg.eigs(adj, k=1, which="LR", return_eigenvectors=True)
     real_mask = np.abs(np.imag(eigvals)) < 1e-6
 
     if not np.any(real_mask):

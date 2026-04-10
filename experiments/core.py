@@ -6,6 +6,59 @@ from operator import itemgetter
 import warnings
 warnings.filterwarnings("ignore")
 
+def create_supra_transition_matrix_virus(
+    supra: sp.spmatrix,
+    node_tensor: list[sp.spmatrix],
+    nodes: int,
+    layers: int,
+    p_intra: float = 1,
+) -> sp.spmatrix:
+    """
+    Construct a custom supra-transition matrix mixing intra- and inter-layer dynamics.
+
+    Parameters
+    ----------
+    supra : scipy.sparse matrix
+        Supra adjacency matrix.
+    node_tensor : list of scipy.sparse matrices
+        Adjacency matrices per layer.
+    nodes : int
+        Number of nodes.
+    layers : int
+        Number of layers.
+    p_intra : float, optional
+        Weight for intra-layer contributions (default=1).
+
+    Returns
+    -------
+    scipy.sparse matrix
+        Row-normalized supra transition matrix.
+    """
+    supra_sum = np.array(supra.sum(axis=0).tolist()[0])
+
+    blocks = []
+    for l in range(layers):
+        block = sp.identity(nodes).multiply(supra_sum[l * nodes:(l + 1) * nodes] - (layers - 1))
+        blocks.append(block)
+
+    mat = []
+    for la in range(layers):
+        norm_fac = np.sum(supra_sum.reshape(layers, nodes)[np.delete(np.arange(layers), la)] - (layers - 1), axis=0)
+        norm_fac = np.where(norm_fac != 0, 1 / norm_fac, 0)
+        mat.append([blocks[i].multiply(norm_fac) for i in np.delete(np.arange(layers), la)])
+
+    diag_blocks = []
+    for la in range(layers):
+        t0_sum = np.array(list(node_tensor[la].sum(axis=0)))[0][0]
+        t0_sum = np.where(t0_sum != 0, 1 / t0_sum, 0)
+        diag_blocks.append(node_tensor[la].dot(sp.diags(t0_sum)).T)
+
+    for i in range(layers):
+        mat[i].insert(i, diag_blocks[i].multiply(np.array([p_intra] * nodes)))
+
+    comb_mat = sp.vstack([sp.hstack(mat[i]) for i in range(layers)])
+    valss = np.where(comb_mat.sum(axis=1) != 0, 1 / comb_mat.sum(axis=1), 0).flatten()
+    return comb_mat.T.multiply(valss).T
 
 class VirusMultiplex():
     """

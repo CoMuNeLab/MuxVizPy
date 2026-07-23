@@ -7,6 +7,8 @@ Provides:
 - Numerical comparison helpers
 """
 
+from collections.abc import Callable
+
 import pytest
 import subprocess
 import tempfile
@@ -373,15 +375,11 @@ class MuxVizScriptGenerator:
 
 
 def _ensure_edges_csv(config_name: str) -> Path:
-    """Return the path to an edges CSV for a config, writing it if needed."""
-    config = NETWORK_CONFIGS[config_name]
+    """Write and return the deterministic edges CSV for a config."""
     data_dir = TESTS_DATA_DIR / config_name
     data_dir.mkdir(parents=True, exist_ok=True)
     edges_path = data_dir / "edges.csv"
-    if edges_path.exists():
-        return edges_path
-    # For configs without a data_dir (e.g. toy), write from TOY_EDGES
-    save_network_for_muxviz(TOY_EDGES, edges_path)
+    save_network_for_muxviz(_network_edges(config_name), edges_path)
     return edges_path
 
 
@@ -561,7 +559,70 @@ def toy_interaction(toy_network):
 # Parametrized network configs for cross-network testing
 # ---------------------------------------------------------------------------
 
-NETWORK_CONFIGS = {
+Edge = tuple[int, int, int, int, float]
+
+
+def _add_ordered_interlayer_edges(
+    edges: list[Edge],
+    n_nodes: int,
+    n_layers: int,
+) -> None:
+    """Add bidirectional coupling between adjacent replicas of each node."""
+    for layer in range(n_layers - 1):
+        for node in range(n_nodes):
+            edges.append((node, layer, node, layer + 1, 1.0))
+            edges.append((node, layer + 1, node, layer, 1.0))
+
+
+def _generate_random_large_edges() -> list[Edge]:
+    """Generate a deterministic sparse random multilayer network."""
+    n_nodes = 1000
+    n_layers = 4
+    rng = np.random.default_rng(1729)
+    edges: list[Edge] = []
+
+    for layer in range(n_layers):
+        for source in range(n_nodes):
+            raw_targets = rng.choice(n_nodes - 1, size=2, replace=False)
+            targets = raw_targets + (raw_targets >= source)
+            for target in targets:
+                weight = float(rng.integers(1, 4))
+                edges.append((source, layer, int(target), layer, weight))
+
+    _add_ordered_interlayer_edges(edges, n_nodes, n_layers)
+    return edges
+
+
+def _generate_scalefree_small_edges() -> list[Edge]:
+    """Generate a deterministic preferential-attachment multilayer network."""
+    n_nodes = 10
+    n_layers = 2
+    rng = np.random.default_rng(2718)
+    edges: list[Edge] = []
+
+    for layer in range(n_layers):
+        degree = np.ones(n_nodes, dtype=float)
+        for source in range(1, n_nodes):
+            n_targets = min(2, source)
+            probabilities = degree[:source] / degree[:source].sum()
+            targets = rng.choice(
+                source,
+                size=n_targets,
+                replace=False,
+                p=probabilities,
+            )
+            for target in targets:
+                target = int(target)
+                edges.append((source, layer, target, layer, 1.0))
+                edges.append((target, layer, source, layer, 1.0))
+                degree[source] += 1
+                degree[target] += 1
+
+    _add_ordered_interlayer_edges(edges, n_nodes, n_layers)
+    return edges
+
+
+NETWORK_CONFIGS: dict[str, dict[str, int]] = {
     "toy": {
         "n_nodes": TOY_N_NODES,
         "n_layers": TOY_N_LAYERS,
@@ -569,16 +630,30 @@ NETWORK_CONFIGS = {
     "random_large": {
         "n_nodes": 1000,
         "n_layers": 4,
-        "data_dir": "random_large",
     },
     "scalefree_small": {
         "n_nodes": 10,
         "n_layers": 2,
-        "data_dir": "scalefree_small",
     },
 }
 
+NETWORK_EDGE_FACTORIES: dict[str, Callable[[], list[Edge]]] = {
+    "random_large": _generate_random_large_edges,
+    "scalefree_small": _generate_scalefree_small_edges,
+}
+
 TESTS_DATA_DIR = Path(__file__).parent / "data"
+
+
+def _network_edges(config_name: str) -> list[Edge]:
+    """Return a fresh deterministic edge list for a test configuration."""
+    if config_name not in NETWORK_CONFIGS:
+        raise KeyError(f"Unknown network configuration: {config_name}")
+
+    edge_factory = NETWORK_EDGE_FACTORIES.get(config_name)
+    if edge_factory is None:
+        return list(TOY_EDGES)
+    return edge_factory()
 
 
 @pytest.fixture(scope="session", params=list(NETWORK_CONFIGS.keys()))
@@ -594,14 +669,11 @@ def net_info(network_config):
     n_nodes = config["n_nodes"]
     n_layers = config["n_layers"]
 
-    if "data_dir" in config:
-        df = pl.read_csv(str(TESTS_DATA_DIR / config["data_dir"] / "edges.csv"))
-    else:
-        df = pl.DataFrame(
-            TOY_EDGES,
-            schema=["node.from", "layer.from", "node.to", "layer.to", "weight"],
-            orient="row",
-        )
+    df = pl.DataFrame(
+        _network_edges(network_config),
+        schema=["node.from", "layer.from", "node.to", "layer.to", "weight"],
+        orient="row",
+    )
 
     tensor = parsing.build_tensor_from_dataframe(df)
     adj = parsing.build_supra_adjacency_matrix_from_tensor(tensor)

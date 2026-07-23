@@ -190,6 +190,30 @@ def get_node_tensor_from_network_list(glist: list[gt.Graph]) -> list[sp.spmatrix
     """
     return [gt.spectral.adjacency(g) for g in glist]
 
+
+def _graph_from_sparse(
+    adjacency: sp.spmatrix,
+    *,
+    directed: bool = False,
+) -> gt.Graph:
+    """Build a graph while preserving matrix size and simple-edge semantics."""
+    if adjacency.shape[0] != adjacency.shape[1]:
+        raise ValueError(
+            f"Adjacency matrix must be square, got shape {adjacency.shape}"
+        )
+
+    rows, columns = adjacency.nonzero()
+    edges = np.column_stack((rows, columns))
+    if not directed and edges.size:
+        edges.sort(axis=1)
+        edges = np.unique(edges, axis=0)
+
+    graph = gt.Graph(directed=directed)
+    graph.add_vertex(adjacency.shape[0])
+    graph.add_edge_list(edges)
+    return graph
+
+
 def supra_adjacency_to_network_list(supra: sp.spmatrix, num_layers: int, num_nodes: int) -> list[gt.Graph]:
     """
     Convert a supra-adjacency matrix into a list of graph-tool graphs (one per layer).
@@ -201,12 +225,7 @@ def supra_adjacency_to_network_list(supra: sp.spmatrix, num_layers: int, num_nod
         List of graph-tool Graph objects, one per layer.
     """
     intra_networks = build_edge_colored_matrices_from_supra_adjacency_matrix(supra, num_layers)
-    graphs = []
-    for adj in intra_networks:
-        g = gt.Graph(directed=False)
-        g.add_edge_list(np.transpose(adj.nonzero()))
-        graphs.append(g)
-    return graphs
+    return [_graph_from_sparse(adjacency) for adjacency in intra_networks]
 
 def build_tensor_from_list_of_graphs(glist: list[gt.Graph]) -> torch.Tensor:
     """
@@ -733,10 +752,7 @@ def get_aggregate_network(
     if return_mat:
         return agg_mat
 
-    g_agg = gt.Graph(directed=False)
-    g_agg.add_edge_list(np.transpose(agg_mat.nonzero()))
-    g_agg.add_vertex(agg_mat.shape[0] - g_agg.num_vertices())
-    return g_agg
+    return _graph_from_sparse(agg_mat)
 
 
 def supra_adjacency_to_block_tensor(
@@ -785,12 +801,7 @@ def node_tensor_to_network_list(
     list of graph_tool.Graph
         One graph per layer.
     """
-    g_list = []
-    for i in range(layers):
-        g = gt.Graph(directed=False)
-        g.add_edge_list(np.transpose(tensor[i].nonzero()))
-        g_list.append(g)
-    return g_list
+    return [_graph_from_sparse(tensor[layer]) for layer in range(layers)]
 
 
 def build_supra_adjacency_matrix_from_extended_edgelist(

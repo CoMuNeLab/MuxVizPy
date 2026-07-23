@@ -890,10 +890,11 @@ def get_multi_Kcore_centrality(supra: sps.spmatrix, layers: int, nodes: int):
     kcore_table = np.zeros([nodes,layers])
     nodes_tensor = parsing_utils.build_edge_colored_matrices_from_supra_adjacency_matrix(supra, layers)
 
-    for l in range(layers):
-        g_tmp = gt.Graph(directed=False)
-        g_tmp.add_edge_list(np.transpose(nodes_tensor[l].nonzero()))
-        kcore_table[:,l] = gt.topology.kcore_decomposition(g_tmp).get_array()
+    for layer in range(layers):
+        g_tmp = parsing_utils._graph_from_sparse(nodes_tensor[layer])
+        kcore_table[:, layer] = (
+            gt.topology.kcore_decomposition(g_tmp).get_array()
+        )
 
     centrality_vector = np.min(kcore_table, axis=1)
     return centrality_vector

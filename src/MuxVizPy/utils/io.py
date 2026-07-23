@@ -1,5 +1,5 @@
 import polars as pl
-from typing import Tuple
+from typing import cast
 import numpy as np
 import scipy.sparse as sp
 from scipy.io import mmread
@@ -19,12 +19,48 @@ def _require_torch():
         )
 
 
-def read_single_layer_edgelist_as_tensor(file_path: str | Path, delimiter: str = ","):
+def _resolve_dimension(
+    df: pl.DataFrame,
+    source_column: str,
+    target_column: str,
+    declared: int | None,
+    parameter_name: str,
+) -> int:
+    """Resolve an inferred dimension and validate an optional declaration."""
+    if df.is_empty():
+        if declared is None:
+            raise ValueError(
+                f"Cannot infer {parameter_name} from an empty edge list"
+            )
+        required = 0
+    else:
+        source_max = cast(int, df[source_column].max())
+        target_max = cast(int, df[target_column].max())
+        required = max(source_max, target_max) + 1
+
+    if declared is None:
+        return required
+    if declared < required:
+        raise ValueError(
+            f"{parameter_name}={declared} is smaller than the required "
+            f"size {required}"
+        )
+    return declared
+
+
+def read_single_layer_edgelist_as_tensor(
+    file_path: str | Path,
+    delimiter: str = ",",
+    *,
+    num_nodes: int | None = None,
+):
     """
     Read a single-layer edgelist from a file and convert it to a sparse tensor.
     Args:
         file_path: Path to the edgelist file.
         delimiter: Delimiter used in the edgelist file.
+        num_nodes: Optional declared node count. This may exceed the count
+            inferred from the edges to include isolated nodes.
     Returns:
         torch.Tensor: A sparse tensor of shape (num_nodes, num_nodes) representing the single-layer network.
     """
@@ -37,21 +73,37 @@ def read_single_layer_edgelist_as_tensor(file_path: str | Path, delimiter: str =
         new_columns=["node.from", "node.to", "weight"])
     indices = torch.tensor(df.select(["node.from", "node.to"]).to_numpy().T, dtype=torch.long)
     values = torch.tensor(df["weight"].to_numpy(), dtype=torch.float32)
-    n = df.select(pl.max("node.from")).item() + 1
+    n = _resolve_dimension(
+        df,
+        "node.from",
+        "node.to",
+        num_nodes,
+        "num_nodes",
+    )
     tensor = torch.sparse_coo_tensor(
         indices=indices,
         values=values,
         size=(n, n),
-        dtype=torch.float32
+        dtype=torch.float32,
+        check_invariants=True,
     ).coalesce()
     return tensor
 
-def read_edgelist_as_tensor(file_path: str | Path, delimiter: str = ","):
+
+def read_edgelist_as_tensor(
+    file_path: str | Path,
+    delimiter: str = ",",
+    *,
+    num_nodes: int | None = None,
+    num_layers: int | None = None,
+):
     """
     Read an edgelist from a file and convert it to a sparse tensor.
     Args:
         file_path: Path to the edgelist file.
         delimiter: Delimiter used in the edgelist file.
+        num_nodes: Optional declared node count.
+        num_layers: Optional declared layer count.
 
     Returns:
         torch.Tensor: A sparse tensor of shape (num_nodes, num_layers, num_nodes, num_layers)
@@ -66,22 +118,44 @@ def read_edgelist_as_tensor(file_path: str | Path, delimiter: str = ","):
         new_columns=["node.from", "layer.from", "node.to", "layer.to", "weight"])
     indices = torch.tensor(df.select(["node.from", "layer.from", "node.to", "layer.to"]).to_numpy().T, dtype=torch.long)
     values = torch.tensor(df["weight"].to_numpy(), dtype=torch.float32)
-    n = df.select(pl.max("node.from")).item() + 1
-    l = df.select(pl.max("layer.from")).item() + 1
+    n = _resolve_dimension(
+        df,
+        "node.from",
+        "node.to",
+        num_nodes,
+        "num_nodes",
+    )
+    resolved_layers = _resolve_dimension(
+        df,
+        "layer.from",
+        "layer.to",
+        num_layers,
+        "num_layers",
+    )
     tensor = torch.sparse_coo_tensor(
         indices=indices,
         values=values,
-        size=(n, l, n, l),
-        dtype=torch.float32
+        size=(n, resolved_layers, n, resolved_layers),
+        dtype=torch.float32,
+        check_invariants=True,
     ).coalesce()
     return tensor
 
-def read_edgelist_as_supraadjacencymatrix(file_path: str | Path, delimiter: str = ",") -> Tuple[sp.csr_matrix, int, int]:
+
+def read_edgelist_as_supraadjacencymatrix(
+    file_path: str | Path,
+    delimiter: str = ",",
+    *,
+    num_nodes: int | None = None,
+    num_layers: int | None = None,
+) -> tuple[sp.csr_matrix, int, int]:
     """
     Read an edgelist from a file and convert it to a supra-adjacency matrix (binary).
     Args:
         file_path: Path to the edgelist file.
         delimiter: Delimiter used in the edgelist file.
+        num_nodes: Optional declared node count.
+        num_layers: Optional declared layer count.
 
     Returns:
         scipy.sparse.csr_matrix: A supra-adjacency matrix of shape (num_nodes * num_layers, num_nodes * num_layers).
@@ -94,24 +168,56 @@ def read_edgelist_as_supraadjacencymatrix(file_path: str | Path, delimiter: str 
     df = pl.read_csv(file_path, separator=delimiter,
         has_header=True,
         new_columns=["node.from", "layer.from", "node.to", "layer.to", "weight"])
-    num_nodes = df.select(pl.max("node.from")).item() + 1
-    num_layers = df.select(pl.max("layer.from")).item() + 1
-    return sp.coo_matrix(
+    resolved_nodes = _resolve_dimension(
+        df,
+        "node.from",
+        "node.to",
+        num_nodes,
+        "num_nodes",
+    )
+    resolved_layers = _resolve_dimension(
+        df,
+        "layer.from",
+        "layer.to",
+        num_layers,
+        "num_layers",
+    )
+    matrix = sp.coo_matrix(
         (
             np.ones_like(df["weight"].to_numpy(), dtype=np.int8),
             (
-                df["node.from"].to_numpy() + df["layer.from"].to_numpy() * num_nodes,
-                df["node.to"].to_numpy() + df["layer.to"].to_numpy() * num_nodes,
+                df["node.from"].to_numpy()
+                + df["layer.from"].to_numpy() * resolved_nodes,
+                df["node.to"].to_numpy()
+                + df["layer.to"].to_numpy() * resolved_nodes,
             ),
-        ), shape=(num_nodes * num_layers, num_nodes * num_layers), dtype=np.float32
-    ).tocsr(), num_nodes, num_layers
+        ),
+        shape=(
+            resolved_nodes * resolved_layers,
+            resolved_nodes * resolved_layers,
+        ),
+        dtype=np.float32,
+    ).tocsr()
+    matrix.sum_duplicates()
+    matrix.eliminate_zeros()
+    matrix.data[:] = 1.0
+    return matrix, resolved_nodes, resolved_layers
 
-def read_edgelist_as_suprainteractionmatrix(file_path: str | Path, delimiter: str = ",") -> Tuple[sp.csr_matrix, int, int]:
+
+def read_edgelist_as_suprainteractionmatrix(
+    file_path: str | Path,
+    delimiter: str = ",",
+    *,
+    num_nodes: int | None = None,
+    num_layers: int | None = None,
+) -> tuple[sp.csr_matrix, int, int]:
     """
     Read an edgelist from a file and convert it to a supra-interaction matrix (weighted).
     Args:
         file_path: Path to the edgelist file.
         delimiter: Delimiter used in the edgelist file.
+        num_nodes: Optional declared node count.
+        num_layers: Optional declared layer count.
 
     Returns:
         scipy.sparse.csr_matrix: A supra-interaction matrix of shape (num_nodes * num_layers, num_nodes * num_layers).
@@ -124,17 +230,39 @@ def read_edgelist_as_suprainteractionmatrix(file_path: str | Path, delimiter: st
     df = pl.read_csv(file_path, separator=delimiter,
         has_header=True,
         new_columns=["node.from", "layer.from", "node.to", "layer.to", "weight"])
-    num_nodes = df.select(pl.max("node.from")).item() + 1
-    num_layers = df.select(pl.max("layer.from")).item() + 1
-    return sp.coo_matrix(
+    resolved_nodes = _resolve_dimension(
+        df,
+        "node.from",
+        "node.to",
+        num_nodes,
+        "num_nodes",
+    )
+    resolved_layers = _resolve_dimension(
+        df,
+        "layer.from",
+        "layer.to",
+        num_layers,
+        "num_layers",
+    )
+    matrix = sp.coo_matrix(
         (
             df["weight"].to_numpy(),
             (
-                df["node.from"].to_numpy() + df["layer.from"].to_numpy() * num_nodes,
-                df["node.to"].to_numpy() + df["layer.to"].to_numpy() * num_nodes,
+                df["node.from"].to_numpy()
+                + df["layer.from"].to_numpy() * resolved_nodes,
+                df["node.to"].to_numpy()
+                + df["layer.to"].to_numpy() * resolved_nodes,
             ),
-        ), shape=(num_nodes * num_layers, num_nodes * num_layers), dtype=np.float32
-    ).tocsr(), num_nodes, num_layers
+        ),
+        shape=(
+            resolved_nodes * resolved_layers,
+            resolved_nodes * resolved_layers,
+        ),
+        dtype=np.float32,
+    ).tocsr()
+    matrix.sum_duplicates()
+    matrix.eliminate_zeros()
+    return matrix, resolved_nodes, resolved_layers
 
 def write_edgelist_from_tensor(
     tensor,

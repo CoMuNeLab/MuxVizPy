@@ -109,6 +109,7 @@ def build_interlayer_coupling_from_tensor(t: torch.Tensor, omega: float, kind: s
         values,
         size=(n, l, n, l),
         dtype=torch.float32,
+        check_invariants=True,
     )
     t_coupling = t_coupling.coalesce()
     return t_coupling
@@ -162,6 +163,34 @@ def build_supra_adjacency_matrix_from_edge_colored_matrices(intra_networks: list
     t += sp.kron(layer_coupling_matrix, identity, format="csr")
     return t
 
+
+def _validate_supra_shape(
+    supra: sp.spmatrix,
+    num_layers: int,
+    num_nodes: int | None = None,
+) -> int:
+    """Validate a supra-matrix shape and return its physical-node count."""
+    if num_layers <= 0:
+        raise ValueError("num_layers must be positive")
+    if supra.shape[0] != supra.shape[1]:
+        raise ValueError(
+            f"Supra-adjacency matrix must be square, got shape {supra.shape}"
+        )
+    if supra.shape[0] % num_layers != 0:
+        raise ValueError(
+            f"Supra-adjacency matrix order {supra.shape[0]} must be "
+            f"divisible by num_layers={num_layers}"
+        )
+
+    inferred_nodes = int(supra.shape[0] // num_layers)
+    if num_nodes is not None and inferred_nodes != num_nodes:
+        raise ValueError(
+            f"Supra-adjacency matrix shape {supra.shape} does not match "
+            f"num_layers={num_layers} and num_nodes={num_nodes}"
+        )
+    return inferred_nodes
+
+
 def build_edge_colored_matrices_from_supra_adjacency_matrix(supra_adj: sp.csr_matrix, num_layers: int) -> list[sp.csr_matrix]:
     """
     Retrieve the block diagonal intralayer adjacency matrices and the interlayer coupling matrix from a supra-adjacency matrix.
@@ -172,7 +201,7 @@ def build_edge_colored_matrices_from_supra_adjacency_matrix(supra_adj: sp.csr_ma
     Returns:
         intra_networks: List of sparse adjacency matrices for each layer (shape: num_nodes x num_nodes).
     """
-    num_nodes = supra_adj.shape[0] // num_layers
+    num_nodes = _validate_supra_shape(supra_adj, num_layers)
     intra_networks = []
     for i in range(num_layers):
         start = i * num_nodes
@@ -180,15 +209,40 @@ def build_edge_colored_matrices_from_supra_adjacency_matrix(supra_adj: sp.csr_ma
         intra_networks.append(supra_adj[start:end, start:end].tocsr())
     return intra_networks
 
-def get_node_tensor_from_network_list(glist: list[gt.Graph]) -> list[sp.spmatrix]:
+def _adjacency_from_graph(
+    graph: gt.Graph,
+    weight: str | None = None,
+) -> sp.spmatrix:
+    """Return graph adjacency, preserving an explicit or standard weight."""
+    property_name = weight
+    if property_name is None and "weight" in graph.ep:
+        property_name = "weight"
+
+    if property_name is None:
+        weight_property = None
+    else:
+        if property_name not in graph.ep:
+            raise ValueError(
+                f"Graph has no edge property named {property_name!r}"
+            )
+        weight_property = graph.ep[property_name]
+    return gt.spectral.adjacency(graph, weight=weight_property)
+
+
+def get_node_tensor_from_network_list(
+    glist: list[gt.Graph],
+    weight: str | None = None,
+) -> list[sp.spmatrix]:
     """
     Convert a list of graph-tool graphs to their scipy sparse adjacency matrices.
     Args:
         glist: List of graph-tool Graph objects, one per layer.
+        weight: Edge-property name to preserve. If omitted, a property named
+            ``"weight"`` is used when present.
     Returns:
         List of scipy sparse adjacency matrices, one per layer.
     """
-    return [gt.spectral.adjacency(g) for g in glist]
+    return [_adjacency_from_graph(graph, weight) for graph in glist]
 
 
 def _graph_from_sparse(
@@ -224,14 +278,21 @@ def supra_adjacency_to_network_list(supra: sp.spmatrix, num_layers: int, num_nod
     Returns:
         List of graph-tool Graph objects, one per layer.
     """
+    _validate_supra_shape(supra, num_layers, num_nodes)
     intra_networks = build_edge_colored_matrices_from_supra_adjacency_matrix(supra, num_layers)
     return [_graph_from_sparse(adjacency) for adjacency in intra_networks]
 
-def build_tensor_from_list_of_graphs(glist: list[gt.Graph]) -> torch.Tensor:
+
+def build_tensor_from_list_of_graphs(
+    glist: list[gt.Graph],
+    weight: str | None = None,
+) -> torch.Tensor:
     """
     Build a tensor from a list of Graphs representing the layers of a multi-layer network.
     Args:
         glist: List of Graphs representing the layers of the multi-layer network. Each graph should have the same number of nodes.
+        weight: Edge-property name to preserve. If omitted, a property named
+            ``"weight"`` is used when present.
     Returns:
         A sparse tensor of shape (num_nodes, num_layers, num_nodes, num_layers) representing the multi-layer network.
     """
@@ -248,9 +309,14 @@ def build_tensor_from_list_of_graphs(glist: list[gt.Graph]) -> torch.Tensor:
     indices_list = []
     values_list = []
     for layer_from, g in enumerate(glist):
-        adj = gt.spectral.adjacency(g)
+        adj = _adjacency_from_graph(g, weight)
         adj = adj.tocoo()
-        for node_from, node_to, value in zip(adj.row, adj.col, adj.data):
+        for node_from, node_to, value in zip(
+            adj.row,
+            adj.col,
+            adj.data,
+            strict=True,
+        ):
             indices_list.append([node_from, layer_from, node_to, layer_from])
             values_list.append(float(value))
 
@@ -261,6 +327,7 @@ def build_tensor_from_list_of_graphs(glist: list[gt.Graph]) -> torch.Tensor:
             torch.empty((0,), dtype=torch.float32),
             size=(num_nodes, num_layers, num_nodes, num_layers),
             dtype=torch.float32,
+            check_invariants=True,
         )
 
     indices = torch.tensor(indices_list, dtype=torch.long).t().contiguous()
@@ -271,9 +338,21 @@ def build_tensor_from_list_of_graphs(glist: list[gt.Graph]) -> torch.Tensor:
         values,
         size=(num_nodes, num_layers, num_nodes, num_layers),
         dtype=torch.float32,
+        check_invariants=True,
     )
     t = t.coalesce()
     return t
+
+
+def _nonzero_tensor_entries(
+    tensor: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return coalesced tensor indices and values with stored zeros removed."""
+    tensor = tensor.coalesce()
+    values = tensor.values()
+    mask = values != 0
+    return tensor.indices()[:, mask], values[mask]
+
 
 def build_aggregate_network_from_tensor(t: torch.Tensor, kind="sum") -> sp.csr_matrix:
     """
@@ -287,9 +366,7 @@ def build_aggregate_network_from_tensor(t: torch.Tensor, kind="sum") -> sp.csr_m
 
     if kind == "sum":
         # Sum over layers: A_agg[i, j] = sum_{k, l} t[i, k, j, l]
-        agg = t.coalesce()
-        indices = agg.indices()
-        values = agg.values()
+        indices, values = _nonzero_tensor_entries(t)
 
         # Create a dictionary to accumulate sums for each (i, j) pair
         from collections import defaultdict
@@ -308,12 +385,15 @@ def build_aggregate_network_from_tensor(t: torch.Tensor, kind="sum") -> sp.csr_m
             data.append(weight)
 
         num_nodes = t.shape[0]
-        return sp.coo_matrix((data, (row, col)), shape=(num_nodes, num_nodes)).tocsr()
+        matrix = sp.coo_matrix(
+            (data, (row, col)),
+            shape=(num_nodes, num_nodes),
+        ).tocsr()
+        matrix.eliminate_zeros()
+        return matrix
     elif kind == "max":
         # Max over layers: A_agg[i, j] = max_{k, l} t[i, k, j, l]
-        agg = t.coalesce()
-        indices = agg.indices()
-        values = agg.values()
+        indices, values = _nonzero_tensor_entries(t)
 
         # Create a dictionary to keep track of the max weight for each (i, j) pair
         edge_dict = {}
@@ -333,12 +413,15 @@ def build_aggregate_network_from_tensor(t: torch.Tensor, kind="sum") -> sp.csr_m
             data.append(weight)
 
         num_nodes = t.shape[0]
-        return sp.coo_matrix((data, (row, col)), shape=(num_nodes, num_nodes)).tocsr()
+        matrix = sp.coo_matrix(
+            (data, (row, col)),
+            shape=(num_nodes, num_nodes),
+        ).tocsr()
+        matrix.eliminate_zeros()
+        return matrix
     elif kind == "min":
         # Min over layers: A_agg[i, j] = min_{k, l} t[i, k, j, l]
-        agg = t.coalesce()
-        indices = agg.indices()
-        values = agg.values()
+        indices, values = _nonzero_tensor_entries(t)
 
         # Create a dictionary to keep track of the min weight for each (i, j) pair
         edge_dict = {}
@@ -358,7 +441,12 @@ def build_aggregate_network_from_tensor(t: torch.Tensor, kind="sum") -> sp.csr_m
             data.append(weight)
 
         num_nodes = t.shape[0]
-        return sp.coo_matrix((data, (row, col)), shape=(num_nodes, num_nodes)).tocsr()
+        matrix = sp.coo_matrix(
+            (data, (row, col)),
+            shape=(num_nodes, num_nodes),
+        ).tocsr()
+        matrix.eliminate_zeros()
+        return matrix
     else:
         raise ValueError(f"Unknown aggregation kind: {kind}")
     
@@ -379,9 +467,7 @@ def build_list_of_graphs_from_tensor(t: torch.Tensor) -> list[gt.Graph]:
     if len(t.shape) != 4 or t.shape[0] != n or t.shape[2] != n or t.shape[1] != l or t.shape[3] != l:
         raise ValueError("Input tensor must have shape (num_nodes, num_layers, num_nodes, num_layers).")
 
-    t = t.coalesce()
-    indices = t.indices()
-    values = t.values()
+    indices, values = _nonzero_tensor_entries(t)
 
     # Create a list of adjacency matrices for each layer
     adj_matrices = [sp.lil_matrix((n, n)) for _ in range(l)]
@@ -416,38 +502,60 @@ def build_laplacian_from_tensor(t: torch.Tensor) -> torch.Tensor:
     if len(t.shape) != 4 or t.shape[0] != n or t.shape[2] != n or t.shape[1] != l or t.shape[3] != l:
         raise ValueError("Input tensor must have shape (num_nodes, num_layers, num_nodes, num_layers).")
 
-    t = t.coalesce()
-    indices = t.indices()
-    values = t.values()
+    indices, values = _nonzero_tensor_entries(t)
 
     # Create a dictionary to accumulate the degree for each node-layer pair
-    degree_dict = {}
+    degree_dict: dict[tuple[int, int], float] = {}
     for idx in range(indices.shape[1]):
         i, k, j, l_ = indices[:, idx]
         weight = values[idx].item()
         degree_dict[(i.item(), k.item())] = degree_dict.get((i.item(), k.item()), 0.0) + weight
 
     # Create the Laplacian entries
-    laplacian_indices = []
-    laplacian_values = []
+    laplacian_index_rows: list[list[int]] = []
+    laplacian_value_rows: list[float] = []
     for idx in range(indices.shape[1]):
         i, k, j, l_ = indices[:, idx]
         weight = values[idx].item()
-        laplacian_indices.append([i.item(), k.item(), j.item(), l_.item()])
-        laplacian_values.append(-weight)
+        laplacian_index_rows.append(
+            [i.item(), k.item(), j.item(), l_.item()]
+        )
+        laplacian_value_rows.append(-weight)
 
     for (i, k), degree in degree_dict.items():
-        laplacian_indices.append([i, k, i, k])
-        laplacian_values.append(degree)
+        laplacian_index_rows.append([i, k, i, k])
+        laplacian_value_rows.append(degree)
 
-    laplacian_indices = torch.tensor(laplacian_indices, dtype=torch.long).t().contiguous()
-    laplacian_values = torch.tensor(laplacian_values, dtype=torch.float32)
+    if laplacian_index_rows:
+        laplacian_indices = torch.tensor(
+            laplacian_index_rows,
+            dtype=torch.long,
+            device=t.device,
+        ).t().contiguous()
+        laplacian_values = torch.tensor(
+            laplacian_value_rows,
+            dtype=t.dtype,
+            device=t.device,
+        )
+    else:
+        laplacian_indices = torch.empty(
+            (4, 0),
+            dtype=torch.long,
+            device=t.device,
+        )
+        laplacian_values = torch.empty(
+            (0,),
+            dtype=t.dtype,
+            device=t.device,
+        )
 
     laplacian = torch.sparse_coo_tensor(
         laplacian_indices,
         laplacian_values,
         size=(n, l, n, l),
-        dtype=torch.float32,
+        dtype=t.dtype,
+        device=t.device,
+        check_invariants=True,
     )
     laplacian = laplacian.coalesce()
     return laplacian
@@ -506,6 +614,7 @@ def build_tensor_from_dataframe(df):
         values,
         size=(n, l, n, l),
         dtype=torch.float32,
+        check_invariants=True,
     )
     t = t.coalesce()
     return t
@@ -527,18 +636,15 @@ def build_edgelist_from_tensor(t):
     n, l = t.shape[0], t.shape[1]
     if len(t.shape) != 4 or t.shape[0] != n or t.shape[2] != n or t.shape[1] != l or t.shape[3] != l:
         raise ValueError("Input tensor must have shape (num_nodes, num_layers, num_nodes, num_layers).")
-    t = t.coalesce()
-
-    indices = t.indices()
-    values = t.values()
+    indices, values = _nonzero_tensor_entries(t)
 
     edge_list = pl.DataFrame(
         {
-            "node.from": indices[0].to(torch.int32).numpy(),
-            "layer.from": indices[1].to(torch.int32).numpy(),
-            "node.to": indices[2].to(torch.int32).numpy(),
-            "layer.to": indices[3].to(torch.int32).numpy(),
-            "weight": values.numpy(),
+            "node.from": indices[0].to(torch.int32).detach().cpu().numpy(),
+            "layer.from": indices[1].to(torch.int32).detach().cpu().numpy(),
+            "node.to": indices[2].to(torch.int32).detach().cpu().numpy(),
+            "layer.to": indices[3].to(torch.int32).detach().cpu().numpy(),
+            "weight": values.detach().cpu().numpy(),
         }
     )
     return edge_list
@@ -557,12 +663,16 @@ def build_supra_interaction_matrix_from_tensor(t):
     if len(t.shape) != 4 or t.shape[0] != n or t.shape[2] != n or t.shape[1] != l or t.shape[3] != l:
         raise ValueError("Input tensor must have shape (num_nodes, num_layers, num_nodes, num_layers).")
 
-    t = t.coalesce()
-    indices = t.indices()
+    indices, values = _nonzero_tensor_entries(t)
     row = (indices[1] * n + indices[0]).detach().cpu().numpy()
     col = (indices[3] * n + indices[2]).detach().cpu().numpy()
-    data = t.values().detach().cpu().numpy()
-    return sp.coo_matrix((data, (row, col)), shape=(l*n, l*n)).tocsr()
+    data = values.detach().cpu().numpy()
+    matrix = sp.coo_matrix(
+        (data, (row, col)),
+        shape=(l * n, l * n),
+    ).tocsr()
+    matrix.eliminate_zeros()
+    return matrix
 
 def build_supra_adjacency_matrix_from_tensor(t):
     """
@@ -578,11 +688,13 @@ def build_supra_adjacency_matrix_from_tensor(t):
     if len(t.shape) != 4 or t.shape[0] != n or t.shape[2] != n or t.shape[1] != l or t.shape[3] != l:
         raise ValueError("Input tensor must have shape (num_nodes, num_layers, num_nodes, num_layers).")
 
-    t = t.coalesce()
-    indices = t.indices()
+    indices, _ = _nonzero_tensor_entries(t)
     row = (indices[1] * n + indices[0]).detach().cpu().numpy()
     col = (indices[3] * n + indices[2]).detach().cpu().numpy()
-    return sp.coo_matrix((np.ones_like(row), (row, col)), shape=(l*n, l*n)).tocsr()
+    return sp.coo_matrix(
+        (np.ones_like(row), (row, col)),
+        shape=(l * n, l * n),
+    ).tocsr()
 
 
 def build_tensor_from_supra_adjacency_matrix(a, num_layers, num_nodes):
@@ -600,6 +712,9 @@ def build_tensor_from_supra_adjacency_matrix(a, num_layers, num_nodes):
     if a.shape != (num_layers*num_nodes, num_layers*num_nodes):
         raise ValueError("Input matrix must have shape (num_layers*num_nodes, num_layers*num_nodes).")
 
+    a = a.tocsr()
+    a.sum_duplicates()
+    a.eliminate_zeros()
     a = a.tocoo()
     row = a.row
     col = a.col
@@ -618,6 +733,7 @@ def build_tensor_from_supra_adjacency_matrix(a, num_layers, num_nodes):
         values,
         size=(num_nodes, num_layers, num_nodes, num_layers),
         dtype=torch.float32,
+        check_invariants=True,
     )
     t = t.coalesce()
     return t
@@ -742,12 +858,14 @@ def get_aggregate_network(
     if obj_type == "glist":
         obj = get_node_tensor_from_network_list(obj)
 
-    agg_mat = sp.coo_matrix(obj[0].shape)
+    agg_mat = sp.csr_matrix(obj[0].shape)
     for layer in obj:
         agg_mat += layer
+    agg_mat.sum_duplicates()
+    agg_mat.eliminate_zeros()
 
     if binarize:
-        agg_mat[agg_mat > 0] = 1
+        agg_mat.data = np.ones(agg_mat.nnz, dtype=np.float64)
 
     if return_mat:
         return agg_mat
@@ -775,6 +893,7 @@ def supra_adjacency_to_block_tensor(
     list of lists
         Block tensor [layers x layers] of adjacency submatrices.
     """
+    _validate_supra_shape(supra, layers, nodes)
     return [
         [supra[i * nodes:(i + 1) * nodes, j * nodes:(j + 1) * nodes] for j in range(layers)]
         for i in range(layers)

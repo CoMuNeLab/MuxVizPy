@@ -49,12 +49,9 @@ include = ["MuxVizPy", "MuxVizPy.*", "muxvizpy"]
 #
 # ============================================================================
 [project.optional-dependencies]
-# PyTorch with sparse tensor support (CPU version)
-# Note: torch-sparse wheels are built against specific torch versions
-# The find-links URL must match the torch version (torch-2.8.0+cpu.html)
+# PyTorch with sparse tensor support
 torch = [
-    "torch>=2.8,<2.9",
-    "torch-sparse>=0.6.18",
+    "torch>=2.8",
 ]
 
 # Development tools
@@ -63,6 +60,7 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.1",
     "mypy>=1.0",
+    "torch>=2.8",
 ]
 
 # Documentation
@@ -106,9 +104,6 @@ all = [
 [tool.uv]
 # Allow pre-release versions for torch ecosystem
 prerelease = "if-necessary-or-explicit"
-
-# Find-links for PyG wheels (torch-sparse)
-find-links = ["https://data.pyg.org/whl/torch-2.8.0+cpu.html"]
 
 # Extra index for PyTorch CPU wheels
 [[tool.uv.index]]

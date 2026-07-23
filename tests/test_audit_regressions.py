@@ -261,17 +261,17 @@ def test_lowercase_alias_supports_normal_submodule_imports():
     assert module is versatility
 
 
-@known_bug("A16")
 def test_dependency_extras_match_supported_torch_and_test_requirements():
     """Development metadata must install what tests import and omit unused packages."""
-    project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
+    metadata = tomllib.loads((REPO / "pyproject.toml").read_text())
+    project = metadata["project"]
     extras = project["optional-dependencies"]
     torch_extra = extras.get("torch", [])
     dev_extra = extras.get("dev", [])
 
-    assert not any("torch-sparse" in item for item in torch_extra)
-    assert not any("torch>=2.8,<2.9" in item for item in torch_extra)
-    assert any(item.split("[", 1)[0].startswith("torch") for item in dev_extra)
+    assert torch_extra == ["torch>=2.8"]
+    assert "torch>=2.8" in dev_extra
+    assert "find-links" not in metadata["tool"]["uv"]
 
 
 def test_transition_tests_do_not_lock_substochastic_pagerank_behavior():

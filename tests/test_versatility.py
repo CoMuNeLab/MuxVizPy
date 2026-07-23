@@ -414,7 +414,8 @@ class TestVersatilityBackendComparison:
 class TestVersatilityReference:
     """Compare results against muxViz R reference.
 
-    Pre-computed results are loaded from tests/data/{config}/muxviz_results.json.
+    Pre-computed results are loaded from
+    tests/reference_data/{config}/muxviz_results.json.
     Tests are skipped for configs without reference data.
     """
 
@@ -424,7 +425,7 @@ class TestVersatilityReference:
         computed = versatility.compute_katz_centrality(
             net_interaction, net_n, net_l, solver="direct", return_eigenvalue=False,
         )
-        # muxviz reference is rounded to 4 dp → need atol >= 5e-4
+        # The Python and R eigensolvers differ slightly in their numerical results.
         compare_metrics(computed, net_muxviz_results["katz"], "Katz exact (vs muxViz R)",
                         rtol=5e-4, atol=5e-4)
 

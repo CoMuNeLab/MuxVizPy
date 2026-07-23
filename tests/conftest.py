@@ -7,23 +7,24 @@ Provides:
 - Numerical comparison helpers
 """
 
-from collections.abc import Callable
-
-import pytest
-import subprocess
-import tempfile
 import json
 import os
+import subprocess
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
 import numpy as np
 import polars as pl
-import scipy.sparse as sp
-from pathlib import Path
-from typing import Dict, Any, List
+import pytest
 
-import torch
 from MuxVizPy.utils import parsing
 
 PROJECT_ROOT = Path(__file__).parent.parent
+MUXVIZ_REPOSITORY = "https://github.com/manlius/muxViz"
+MUXVIZ_REFERENCE_COMMIT = "69c1752539bb757df8222917999a8c299a6821a4"
+MUXVIZ_RSCRIPT_ENV = "MUXVIZ_RSCRIPT"
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +187,7 @@ def compare_metrics(
         raise e
 
 
-def save_network_for_muxviz(edges: List, output_path: Path) -> None:
+def save_network_for_muxviz(edges: list, output_path: Path) -> None:
     """Save network in CSV format expected by muxViz R."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
@@ -196,37 +197,63 @@ def save_network_for_muxviz(edges: List, output_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# MuxViz R runner (Singularity container)
+# MuxViz R runner
 # ---------------------------------------------------------------------------
 
 class MuxVizRunner:
-    """Run R/muxViz computations via Singularity container."""
+    """Run muxViz through a configured local Rscript or Singularity."""
 
-    def __init__(self, container_path: Path = None):
+    def __init__(
+        self,
+        container_path: Path | None = None,
+        rscript_path: Path | None = None,
+    ):
+        configured_rscript = rscript_path or os.environ.get(MUXVIZ_RSCRIPT_ENV)
+        if configured_rscript:
+            self.rscript_path = Path(configured_rscript).expanduser()
+            if not self.rscript_path.is_file():
+                raise FileNotFoundError(f"Rscript not found: {self.rscript_path}")
+            self.container_path = None
+            return
+
+        self.rscript_path = None
         self.container_path = container_path or PROJECT_ROOT / "container" / "muxviz.sif"
-        if not self.container_path.exists():
-            raise FileNotFoundError(f"Container not found: {self.container_path}")
+        if not self.container_path.is_file():
+            raise FileNotFoundError(
+                f"Set {MUXVIZ_RSCRIPT_ENV} or provide {self.container_path}"
+            )
 
-    def run_r_script(self, r_code: str, bind_paths: list = None) -> Dict[str, Any]:
-        """Execute R code in the container and return stdout/stderr."""
+    def run_r_script(
+        self,
+        r_code: str,
+        bind_paths: list | None = None,
+    ) -> dict[str, Any]:
+        """Execute R code and return stdout and stderr."""
         bind_paths = bind_paths or []
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".R", delete=False) as f:
             f.write(r_code)
             r_script_path = f.name
 
-        cmd = ["singularity", "exec", "--bind", f"{PROJECT_ROOT}:/mnt"]
-        for bp in bind_paths:
-            cmd.extend(["--bind", bp])
-        cmd.extend([
-            str(self.container_path),
-            "bash", "-c",
-            f"export LANG=C; export LC_ALL=C; Rscript {r_script_path}",
-        ])
+        if self.rscript_path is not None:
+            cmd = [str(self.rscript_path), "--no-environ", r_script_path]
+        else:
+            cmd = ["singularity", "exec", "--bind", f"{PROJECT_ROOT}:/mnt"]
+            for bind_path in bind_paths:
+                cmd.extend(["--bind", bind_path])
+            cmd.extend([str(self.container_path), "Rscript", "--no-environ", r_script_path])
+
+        environment = os.environ.copy()
+        environment.update({"LANG": "C", "LC_ALL": "C", "RGL_USE_NULL": "TRUE"})
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, check=True, cwd=PROJECT_ROOT,
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=PROJECT_ROOT,
+                env=environment,
             )
             return {"stdout": result.stdout, "stderr": result.stderr}
         except subprocess.CalledProcessError as e:
@@ -240,11 +267,11 @@ class MuxVizRunner:
 
 @pytest.fixture(scope="session")
 def muxviz_runner():
-    """MuxViz runner; skips entire session if container is missing."""
+    """MuxViz runner; skip when neither local R nor the container is configured."""
     try:
         return MuxVizRunner()
-    except FileNotFoundError:
-        pytest.skip("muxviz.sif container not found")
+    except FileNotFoundError as error:
+        pytest.skip(str(error))
 
 
 @pytest.fixture(scope="session")
@@ -307,7 +334,7 @@ class MuxVizScriptGenerator:
         n_nodes: int,
         n_layers: int,
         output_path: Path,
-        metrics: List[str] = None,
+        metrics: list[str] | None = None,
     ) -> str:
         """Generate R script for computing specified metrics.
 
@@ -344,6 +371,20 @@ class MuxVizScriptGenerator:
         library(muxViz)
         library(jsonlite)
 
+        muxviz_description <- packageDescription("muxViz")
+        installed_commit <- muxviz_description$RemoteSha
+        expected_commit <- "{MUXVIZ_REFERENCE_COMMIT}"
+        if (is.null(installed_commit) || !identical(installed_commit, expected_commit)) {{
+            stop(
+                paste0(
+                    "muxViz commit mismatch: expected ",
+                    expected_commit,
+                    ", installed ",
+                    ifelse(is.null(installed_commit), "<unknown>", installed_commit)
+                )
+            )
+        }}
+
         df <- read.csv("{edgelist_path}", header = TRUE, sep=",")
 
         # Remap node and layer IDs to 1-based dense indices
@@ -367,16 +408,23 @@ class MuxVizScriptGenerator:
             sign(adj + t(adj))  # symmetrize and binarize (required for BGS density matrix)
         }})
 
-        results <- list()
+        results <- list(
+            "_metadata" = list(
+                repository = "{MUXVIZ_REPOSITORY}",
+                commit = expected_commit,
+                muxviz_version = as.character(packageVersion("muxViz")),
+                r_version = as.character(getRversion())
+            )
+        )
 {chr(10).join(metric_lines)}
 
-        write_json(results, "{output_path}", auto_unbox=TRUE)
+        write_json(results, "{output_path}", auto_unbox=TRUE, digits=16)
         '''
 
 
 def _ensure_edges_csv(config_name: str) -> Path:
     """Write and return the deterministic edges CSV for a config."""
-    data_dir = TESTS_DATA_DIR / config_name
+    data_dir = GENERATED_DATA_DIR / config_name
     data_dir.mkdir(parents=True, exist_ok=True)
     edges_path = data_dir / "edges.csv"
     save_network_for_muxviz(_network_edges(config_name), edges_path)
@@ -385,9 +433,9 @@ def _ensure_edges_csv(config_name: str) -> Path:
 
 def recompute_muxviz_results(
     config_name: str,
-    metrics: List[str] = None,
-    existing_results: Dict[str, Any] = None,
-) -> Dict[str, Any]:
+    metrics: list[str] | None = None,
+    existing_results: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Recompute muxViz R reference results for missing metrics.
 
     Parameters
@@ -409,7 +457,7 @@ def recompute_muxviz_results(
     config = NETWORK_CONFIGS[config_name]
     n_nodes = config["n_nodes"]
     n_layers = config["n_layers"]
-    results_path = TESTS_DATA_DIR / config_name / "muxviz_results.json"
+    results_path = REFERENCE_DATA_DIR / config_name / "muxviz_results.json"
 
     if existing_results is None:
         existing_results = {}
@@ -430,7 +478,8 @@ def recompute_muxviz_results(
         return existing_results
 
     edges_path = _ensure_edges_csv(config_name)
-    output_path = TESTS_DATA_DIR / config_name / "muxviz_recomputed.json"
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = GENERATED_DATA_DIR / config_name / "muxviz_recomputed.json"
 
     script = MuxVizScriptGenerator.generate_script(
         edges_path, n_nodes, n_layers, output_path, metrics,
@@ -445,9 +494,9 @@ def recompute_muxviz_results(
         with open(output_path) as f:
             new_results = json.load(f)
         existing_results.update(new_results)
-        # Persist the merged results
         with open(results_path, "w") as f:
-            json.dump(existing_results, f)
+            json.dump(existing_results, f, indent=2)
+            f.write("\n")
         output_path.unlink()
 
     return existing_results
@@ -642,7 +691,8 @@ NETWORK_EDGE_FACTORIES: dict[str, Callable[[], list[Edge]]] = {
     "scalefree_small": _generate_scalefree_small_edges,
 }
 
-TESTS_DATA_DIR = Path(__file__).parent / "data"
+GENERATED_DATA_DIR = Path(__file__).parent / "data"
+REFERENCE_DATA_DIR = Path(__file__).parent / "reference_data"
 
 
 def _network_edges(config_name: str) -> list[Edge]:
@@ -722,13 +772,12 @@ def net_nl(net_info):
 def net_muxviz_results(network_config):
     """Load pre-computed muxViz R reference results.
 
-    If the JSON exists but is missing some metric keys, attempts to
-    recompute them via the Singularity container (requires muxviz.sif).
+    If the JSON exists but is missing metric keys, attempt to recompute them
+    through a configured local Rscript or the Singularity container.
     Skips if no results file exists and cannot be generated.
     """
-    results_path = TESTS_DATA_DIR / network_config / "muxviz_results.json"
+    results_path = REFERENCE_DATA_DIR / network_config / "muxviz_results.json"
     if not results_path.exists():
-        # Try to generate from scratch via container
         results = recompute_muxviz_results(network_config)
         if not results:
             pytest.skip(f"No muxViz reference results for '{network_config}'")
@@ -737,7 +786,6 @@ def net_muxviz_results(network_config):
     with open(results_path) as f:
         results = json.load(f)
 
-    # Check for missing metrics and recompute if container is available
     all_metrics = list(MuxVizScriptGenerator.METRIC_FUNCTIONS.keys())
     missing = [m for m in all_metrics if m not in results]
     if missing:

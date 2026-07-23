@@ -228,7 +228,8 @@ class TestTopologyCorrectness:
 class TestTopologyReference:
     """Compare topology results against muxViz R reference.
 
-    Pre-computed results are loaded from tests/data/{config}/muxviz_results.json.
+    Pre-computed results are loaded from
+    tests/reference_data/{config}/muxviz_results.json.
     Tests are skipped for configs without reference data or missing metric keys.
     """
 

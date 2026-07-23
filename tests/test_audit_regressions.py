@@ -254,7 +254,6 @@ def test_sparse_cp_rejects_non_four_dimensional_tensor_cleanly():
         )
 
 
-@known_bug("A15")
 def test_lowercase_alias_supports_normal_submodule_imports():
     """The lowercase compatibility package must alias supported submodules."""
     module = importlib.import_module("muxvizpy.versatility")

@@ -16,6 +16,14 @@ from MuxVizPy.utils import parsing as parsing_utils
 from MuxVizPy.utils.katz_utils import _katz_neumann, _katz_krylov, _VALID_SOLVERS
 
 
+def get_largest_eigenvalue(
+    adj: sps.spmatrix,
+    logger: logging.Logger | None = None,
+) -> tuple[float, np.ndarray]:
+    """Return the largest-magnitude eigenpair using the legacy function name."""
+    return get_largest_magnitude_eigenvalue(adj, logger=logger)
+
+
 # ---------------------------------------------------------------------------
 # Block accumulation and aggregation helpers (integrated from hornet/node_based)
 # ---------------------------------------------------------------------------

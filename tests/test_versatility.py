@@ -37,6 +37,13 @@ class TestVersatilityCorrectness:
         lam, _ = versatility.get_largest_eigenvalue(net_adjacency)
         assert lam > 0
 
+    def test_get_largest_eigenvalue_preserves_largest_magnitude_behavior(self):
+        adj = sp.diags([-5.0, 2.0, 1.0], format="csr")
+
+        lam, _ = versatility.get_largest_eigenvalue(adj)
+
+        assert lam == pytest.approx(-5.0)
+
     def test_approximate_largest_eigenvalue_returns_tuple(self, net_adjacency, net_nl):
         lam, vec = versatility.approximate_largest_eigenvalue(net_adjacency)
         assert isinstance(lam, float)

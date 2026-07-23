@@ -324,7 +324,6 @@ def test_shipping_notebooks_and_checkpoint_directory_are_clean():
     assert not checkpoints
 
 
-@known_bug("A20")
 def test_legacy_experiment_module_imports_successfully():
     """Public experiment class definitions must survive module import."""
     path = REPO / "experiments" / "core.py"

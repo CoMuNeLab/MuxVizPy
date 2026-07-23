@@ -1,9 +1,11 @@
-import numpy as np
-import pandas as pd
-import graph_tool as gt
+import warnings
 from operator import itemgetter
 
-import warnings
+import graph_tool as gt
+import numpy as np
+import pandas as pd
+import scipy.sparse as sp
+
 warnings.filterwarnings("ignore")
 
 def create_supra_transition_matrix_virus(

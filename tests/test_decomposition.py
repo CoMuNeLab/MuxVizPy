@@ -44,7 +44,12 @@ def _make_sparse_tensor(N, L, nnz, seed=42):
     vals = rng.uniform(0.1, 5.0, size=nnz)
     indices = torch.tensor(np.stack([i0, i1, i2, i3]), dtype=torch.long)
     values = torch.tensor(vals, dtype=torch.float64)
-    return torch.sparse_coo_tensor(indices, values, size=(N, L, N, L))
+    return torch.sparse_coo_tensor(
+        indices,
+        values,
+        size=(N, L, N, L),
+        check_invariants=True,
+    )
 
 
 def _reconstruct_at_nonzeros(factors, weights, coords):
@@ -709,9 +714,14 @@ class TestSparseCPReference:
 
         indices = torch.tensor(coords, dtype=torch.long)
         values = torch.tensor(vals, dtype=torch.float64)
-        tensor = torch.sparse_coo_tensor(indices, values, size=(N, L, N, L))
+        tensor = torch.sparse_coo_tensor(
+            indices,
+            values,
+            size=(N, L, N, L),
+            check_invariants=True,
+        )
 
-        # Our decomposition
+        # MuxVizPy decomposition
         (A, B, C, D), our_w, _ = sparse_cp_decomposition(
             tensor, rank=rank, max_iter=300, tol=1e-12,
             backend="numpy", random_state=42,

@@ -135,6 +135,7 @@ class TestParsingCorrectness:
             torch.tensor([[0], [1]]),
             torch.tensor([1.0]),
             size=(3, 3),
+            check_invariants=True,
         )
         with pytest.raises(ValueError):
             parsing.build_supra_adjacency_matrix_from_tensor(t)

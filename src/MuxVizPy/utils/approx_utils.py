@@ -11,7 +11,35 @@ import logging
 from typing import Optional, Union, List
 
 
-def get_largest_magnitude_eigenvalue(adj: sps.spmatrix, logger: Optional[logging.Logger] = None) -> tuple[float, np.ndarray]:
+def _prepare_eigen_matrix(adj: sps.spmatrix) -> sps.csr_matrix:
+    """Validate and normalize a sparse matrix used by the eigenvalue helpers."""
+    if not sps.isspmatrix(adj):
+        raise TypeError("adj must be a SciPy sparse matrix")
+    if adj.shape[0] != adj.shape[1]:
+        raise ValueError(f"adj must be square, got shape {adj.shape}")
+
+    matrix = adj.tocsr(copy=True)
+    matrix.sum_duplicates()
+    matrix.eliminate_zeros()
+    return matrix
+
+
+def _orient_eigenvector(vector: np.ndarray) -> np.ndarray:
+    """Choose a deterministic sign for a real eigenvector."""
+    vector = np.real_if_close(vector)
+    if np.iscomplexobj(vector):
+        vector = np.real(vector)
+    vector = np.asarray(vector, dtype=np.float64)
+    vector[np.abs(vector) < 1e-12] = 0.0
+    if vector.sum() < 0:
+        vector = -vector
+    return vector
+
+
+def get_largest_magnitude_eigenvalue(
+    adj: sps.spmatrix,
+    logger: Optional[logging.Logger] = None,
+) -> tuple[float, np.ndarray]:
     """
     Compute the largest eigenvalue and corresponding eigenvector of a sparse matrix.
 
@@ -27,34 +55,42 @@ def get_largest_magnitude_eigenvalue(adj: sps.spmatrix, logger: Optional[logging
     tuple
         (largest eigenvalue, corresponding eigenvector)
     """
-    eigvals, eigvecs = sps.linalg.eigs(adj, k=1, which="LM", return_eigenvectors=True)
-    real_mask = np.abs(np.imag(eigvals)) < 1e-6
+    matrix = _prepare_eigen_matrix(adj)
+    size = matrix.shape[0]
+    if size == 0:
+        return 0.0, np.empty(0, dtype=np.float64)
+    if matrix.nnz == 0:
+        return 0.0, np.zeros(size, dtype=np.float64)
 
-    if not np.any(real_mask):
-        if logger:
-            logger.warning("Warning! Complex numbers in the leading eigenvalue.")
-        lam = float(np.real(eigvals[0]))
-        vec = np.real(eigvecs[:, 0])
+    if size <= 2:
+        eigvals, eigvecs = np.linalg.eig(matrix.toarray())
+        index = int(np.argmax(np.abs(eigvals)))
     else:
-        lam = float(np.real(eigvals[0]))
-        vec = np.real(eigvecs[:, 0])
+        start = np.full(size, 1.0 / np.sqrt(size))
+        eigvals, eigvecs = sps.linalg.eigs(
+            matrix,
+            k=1,
+            which="LM",
+            v0=start,
+            return_eigenvectors=True,
+        )
+        index = 0
 
-    if not np.allclose(np.imag(vec), 0):
-        if logger:
-            logger.warning("Warning! Complex numbers in the leading eigenvector.")
-
-    vec[(vec > -1e-12) & (vec < 1e-12)] = 0.0
-
-    non_zero_vec = vec[vec != 0]
-    if len(non_zero_vec) > 0 and np.all(non_zero_vec < 0):
-        vec = -vec
+    if abs(np.imag(eigvals[index])) >= 1e-6 and logger:
+        logger.warning("Complex leading eigenvalue; returning its real component.")
+    lam = float(np.real(eigvals[index]))
+    vec = _orient_eigenvector(eigvecs[:, index])
 
     if logger and logger.isEnabledFor(logging.DEBUG):
         logger.debug(f"Largest eigenvalue: {lam}, eigenvector min: {vec.min()}, max: {vec.max()}, mean: {vec.mean()}")
 
     return lam, vec
 
-def get_largest_real_eigenvalue(adj: sps.spmatrix, logger: Optional[logging.Logger] = None) -> tuple[float, np.ndarray]:
+
+def get_largest_real_eigenvalue(
+    adj: sps.spmatrix,
+    logger: Optional[logging.Logger] = None,
+) -> tuple[float, np.ndarray]:
     """
     Compute the largest eigenvalue and corresponding eigenvector of a sparse matrix.
 
@@ -70,32 +106,65 @@ def get_largest_real_eigenvalue(adj: sps.spmatrix, logger: Optional[logging.Logg
     tuple
         (largest eigenvalue, corresponding eigenvector)
     """
-    eigvals, eigvecs = sps.linalg.eigs(adj, k=1, which="LR", return_eigenvectors=True)
-    real_mask = np.abs(np.imag(eigvals)) < 1e-6
+    matrix = _prepare_eigen_matrix(adj)
+    size = matrix.shape[0]
+    if size == 0:
+        return 0.0, np.empty(0, dtype=np.float64)
+    if matrix.nnz == 0:
+        return 0.0, np.zeros(size, dtype=np.float64)
 
-    if not np.any(real_mask):
-        if logger:
-            logger.warning("Warning! Complex numbers in the leading eigenvalue.")
-        lam = float(np.real(eigvals[0]))
-        vec = np.real(eigvecs[:, 0])
+    if size <= 2:
+        eigvals, eigvecs = np.linalg.eig(matrix.toarray())
+        index = int(np.argmax(np.real(eigvals)))
     else:
-        lam = float(np.real(eigvals[0]))
-        vec = np.real(eigvecs[:, 0])
+        start = np.full(size, 1.0 / np.sqrt(size))
+        is_symmetric = (matrix - matrix.T).nnz == 0
+        if is_symmetric:
+            eigvals, eigvecs = sps.linalg.eigsh(
+                matrix,
+                k=1,
+                which="LA",
+                v0=start,
+                return_eigenvectors=True,
+            )
+        else:
+            eigvals, eigvecs = sps.linalg.eigs(
+                matrix,
+                k=1,
+                which="LR",
+                v0=start,
+                return_eigenvectors=True,
+            )
+        index = 0
 
-    if not np.allclose(np.imag(vec), 0):
-        if logger:
-            logger.warning("Warning! Complex numbers in the leading eigenvector.")
-
-    vec[(vec > -1e-12) & (vec < 1e-12)] = 0.0
-
-    non_zero_vec = vec[vec != 0]
-    if len(non_zero_vec) > 0 and np.all(non_zero_vec < 0):
-        vec = -vec
+    if abs(np.imag(eigvals[index])) >= 1e-6 and logger:
+        logger.warning("Complex leading eigenvalue; returning its real component.")
+    lam = float(np.real(eigvals[index]))
+    vec = _orient_eigenvector(eigvecs[:, index])
 
     if logger and logger.isEnabledFor(logging.DEBUG):
         logger.debug(f"Largest eigenvalue: {lam}, eigenvector min: {vec.min()}, max: {vec.max()}, mean: {vec.mean()}")
 
     return lam, vec
+
+
+def get_perron_eigenpair(
+    adj: sps.spmatrix,
+    logger: logging.Logger | None = None,
+) -> tuple[float, np.ndarray]:
+    """Return a deterministic nonnegative Perron eigenpair.
+
+    The input must be a nonnegative square sparse matrix. Tiny and empty
+    matrices are handled without calling ARPACK.
+    """
+    matrix = _prepare_eigen_matrix(adj)
+    if np.any(matrix.data < 0):
+        raise ValueError("Perron eigenvectors require a nonnegative matrix")
+
+    eigenvalue, eigenvector = get_largest_real_eigenvalue(matrix, logger=logger)
+    eigenvector = np.abs(eigenvector)
+    eigenvector[np.abs(eigenvector) < 1e-12] = 0.0
+    return eigenvalue, eigenvector
 
 
 def approximate_largest_eigenvalue(

@@ -61,7 +61,6 @@ def test_two_layer_global_overlap_uses_both_layers_in_denominator():
     assert overlap == pytest.approx(1.0 / 3.0)
 
 
-@known_bug("A2")
 def test_eigenvector_centrality_supports_tiny_nonnegative_networks():
     """A valid 2x2 graph must not leak ARPACK's k >= N-1 limitation."""
     adjacency = sp.csr_matrix([[0, 1], [1, 0]], dtype=float)
@@ -509,7 +508,6 @@ def test_pagerank_rejects_an_invalid_damping_factor():
         )
 
 
-@known_bug("A31")
 def test_katz_rejects_undefined_automatic_alpha_for_zero_spectral_radius():
     """A nonempty DAG has zero radius, making the automatic Katz alpha undefined."""
     adjacency = sp.diags(
@@ -522,7 +520,6 @@ def test_katz_rejects_undefined_automatic_alpha_for_zero_spectral_radius():
         )
 
 
-@known_bug("A32")
 def test_exact_hits_rejects_or_corrects_signed_dominant_vectors(monkeypatch):
     """A positive mean must not allow negative HITS centralities through validation."""
     signed = np.array([-0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])

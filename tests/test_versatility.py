@@ -11,12 +11,12 @@ Classes:
     TestVersatilityReference        — comparison against pre-computed muxViz R results
 """
 
-import pytest
 import numpy as np
+import pytest
 import scipy.sparse as sp
-from MuxVizPy import versatility
 from conftest import compare_metrics
 
+from MuxVizPy import versatility
 
 # ============================================================================
 # Correctness — shapes, value ranges, basic invariants
@@ -264,6 +264,123 @@ class TestKatzCentralityAgreement:
             maxiter=1000, tol=1e-8,
         )
         np.testing.assert_allclose(bicgstab_result, exact, atol=5e-4)
+
+
+class TestCentralityEdgeCases:
+    """Centrality behavior for tiny, empty, reducible, and acyclic networks."""
+
+    def test_eigenvector_is_deterministic_on_bipartite_network(self):
+        adjacency = sp.diags(
+            [np.ones(3), np.ones(3)],
+            offsets=[-1, 1],
+            shape=(4, 4),
+            format="csr",
+        )
+
+        results = [
+            versatility.compute_eigenvector_centrality(adjacency, n=4, l=1)
+            for _ in range(3)
+        ]
+
+        for result in results:
+            assert np.all(result >= 0)
+            np.testing.assert_allclose(
+                result,
+                [0.618034, 1.0, 1.0, 0.618034],
+                atol=1e-6,
+            )
+
+    def test_classical_random_walk_is_nonnegative_and_deterministic(self):
+        adjacency = sp.diags(
+            [np.ones(3), np.ones(3)],
+            offsets=[-1, 1],
+            shape=(4, 4),
+            format="csr",
+        )
+
+        results = [
+            versatility.compute_multi_rw_centrality(
+                adjacency, n=4, l=1, kind="classical"
+            )
+            for _ in range(3)
+        ]
+
+        for result in results:
+            assert np.all(result >= 0)
+            np.testing.assert_allclose(result, [0.5, 1.0, 1.0, 0.5])
+
+    def test_empty_networks_return_empty_centralities(self):
+        adjacency = sp.csr_matrix((0, 0))
+
+        results = [
+            versatility.compute_eigenvector_centrality(adjacency, n=0, l=1),
+            versatility.compute_katz_centrality(adjacency, n=0, l=1),
+            versatility.compute_multi_rw_centrality(
+                adjacency, n=0, l=1, kind="classical"
+            ),
+            versatility.compute_multi_hub_centrality(adjacency, n=0, l=1),
+            versatility.compute_multi_authority_centrality(
+                adjacency, n=0, l=1
+            ),
+        ]
+
+        assert all(result.shape == (0,) for result in results)
+
+    def test_explicit_katz_alpha_supports_zero_radius_network(self):
+        adjacency = sp.diags(
+            np.ones(9), offsets=1, shape=(10, 10), format="csr"
+        )
+
+        first = versatility.compute_katz_centrality(
+            adjacency, n=10, l=1, alpha=0.5, solver="neumann"
+        )
+        second = versatility.compute_katz_centrality(
+            adjacency, n=10, l=1, alpha=0.5, solver="neumann"
+        )
+
+        assert np.all(first >= 0)
+        np.testing.assert_array_equal(first, second)
+
+    @pytest.mark.parametrize("alpha", [-0.1, 1.0, np.inf, np.nan])
+    def test_katz_rejects_invalid_explicit_alpha(self, alpha):
+        adjacency = sp.csr_matrix([[0, 1], [1, 0]], dtype=float)
+
+        with pytest.raises(ValueError, match="alpha"):
+            versatility.compute_katz_centrality(
+                adjacency, n=2, l=1, alpha=alpha
+            )
+
+    def test_exact_hits_balances_tied_components_deterministically(self):
+        adjacency = sp.csr_matrix(
+            (
+                np.ones(6),
+                ([0, 0, 0, 4, 4, 4], [1, 2, 3, 5, 6, 7]),
+            ),
+            shape=(8, 8),
+        )
+
+        hub_results = [
+            versatility.compute_multi_hub_centrality(adjacency, n=8, l=1)
+            for _ in range(3)
+        ]
+        authority_results = [
+            versatility.compute_multi_authority_centrality(
+                adjacency, n=8, l=1
+            )
+            for _ in range(3)
+        ]
+
+        for result in hub_results + authority_results:
+            assert np.all(result >= 0)
+        for result in hub_results[1:]:
+            np.testing.assert_array_equal(result, hub_results[0])
+        for result in authority_results[1:]:
+            np.testing.assert_array_equal(result, authority_results[0])
+        assert hub_results[0][0] == pytest.approx(hub_results[0][4])
+        np.testing.assert_allclose(
+            authority_results[0][1:4],
+            authority_results[0][5:8],
+        )
 
 
 # ============================================================================

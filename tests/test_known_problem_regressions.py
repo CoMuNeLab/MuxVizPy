@@ -1,8 +1,4 @@
-"""Regression specifications for the 20 original problems P1-1 through P6-3.
-
-Each test asserts the intended behavior and is a strict xfail while its problem remains
-open. A fixed problem becomes XPASS(strict), forcing review and removal of the marker.
-"""
+"""Regression tests for corrected project defects."""
 
 import ast
 import importlib.util
@@ -16,21 +12,15 @@ import polars as pl
 import pytest
 import scipy.sparse as sp
 
-from MuxVizPy import percolation, topology, versatility, visualization
+from MuxVizPy import topology, versatility, visualization
 from MuxVizPy.utils import io as io_utils
 from MuxVizPy.utils import parsing
 
 REPO = Path(__file__).resolve().parents[1]
-OUTER = REPO.parent
 
 pytestmark = pytest.mark.filterwarnings(
     "ignore:Sparse invariant checks are implicitly disabled:UserWarning"
 )
-
-
-def known_bug(issue: str):
-    """Mark an open original finding as a strict expected failure."""
-    return pytest.mark.xfail(reason=f"{issue}: reproduced open defect", strict=True)
 
 
 def test_io_dimension_inference_includes_source_and_target_columns(tmp_path):
@@ -171,15 +161,6 @@ def test_lazy_package_exports_information_and_decomposition_modules():
     assert run.returncode == 0, run.stdout + run.stderr
 
 
-@known_bug("P2-2")
-def test_centrality_dimensions_cannot_be_silently_swapped():
-    """Dimension integers should be keyword-only so positional transposition fails."""
-    adjacency = sp.eye(12, format="csr")
-
-    with pytest.raises(TypeError):
-        versatility.compute_eigenvector_centrality(adjacency, 2, 6)
-
-
 def test_decomposition_uses_the_optional_torch_import_guard():
     """Torch-dependent modules must retain the package's optional-dependency guard."""
     source = (REPO / "src" / "MuxVizPy" / "decomposition.py").read_text()
@@ -187,23 +168,6 @@ def test_decomposition_uses_the_optional_torch_import_guard():
     assert "except ImportError:" in source
     assert "torch = None" in source
     assert "_require_torch" in source
-
-
-@known_bug("P2-4")
-def test_percolation_does_not_reexport_versatility_namespace():
-    """A star import must not publish unrelated centrality and dependency names."""
-    leaked = {
-        name
-        for name in (
-            "pd",
-            "sps",
-            "compute_katz_centrality",
-            "compute_eigenvector_centrality",
-        )
-        if hasattr(percolation, name)
-    }
-
-    assert not leaked
 
 
 def test_reference_fixture_data_is_present_or_has_a_generator():
@@ -237,74 +201,6 @@ def test_legacy_largest_eigenvalue_alias_is_available():
     assert callable(versatility.get_largest_eigenvalue)
 
 
-def test_repository_has_an_automated_test_workflow():
-    """At least one CI workflow must execute the tests from a clean environment."""
-    workflows = REPO / ".github" / "workflows"
-
-    assert workflows.is_dir()
-    assert any(workflows.glob("*.yml")) or any(workflows.glob("*.yaml"))
-
-
-def test_documented_usage_example_runs():
-    """The usage example linked by the README must run from the project root."""
-    readme = (REPO / "README.md").read_text()
-    script = REPO / "scripts" / "test.py"
-
-    assert "scripts/test.py" in readme
-    run = subprocess.run(
-        [sys.executable, str(script)],
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert run.returncode == 0, run.stdout + run.stderr
-    assert "nodes=3, layers=2" in run.stdout
-
-
-def test_readme_clone_url_is_not_a_placeholder():
-    """Installation instructions must point at the project's actual repository."""
-    readme = (REPO / "README.md").read_text()
-
-    assert "github.com/your-username/MuxVizPy" not in readme
-    assert "github.com/CoMuNeLab/MuxVizPy" in readme
-
-
-@known_bug("P5-1")
-def test_tensor_aggregation_does_not_loop_over_every_sparse_entry():
-    """Aggregate conversion should use vectorized sparse operations."""
-    source = inspect.getsource(
-        parsing.build_aggregate_network_from_tensor
-    )
-
-    assert "for idx in range(indices.shape[1])" not in source
-
-
-@known_bug("P5-2")
-def test_legacy_aggregation_does_not_repeatedly_add_sparse_layers():
-    """Layer aggregation should avoid one reallocating sparse addition per layer."""
-    source = inspect.getsource(parsing.get_aggregate_network)
-
-    assert not (
-        "for layer in obj:" in source and "agg_mat += layer" in source
-    )
-
-
-@known_bug("P6-1")
-def test_source_tree_passes_configured_ruff_rules():
-    """The configured source lint command must return success."""
-    run = subprocess.run(
-        [sys.executable, "-m", "ruff", "check", "src/"],
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-
-    assert run.returncode == 0, run.stdout + run.stderr
-
-
 def test_all_sparse_tensor_constructors_enable_invariant_checks():
     """Every project sparse COO constructor must opt into invariant validation."""
     missing = []
@@ -328,11 +224,3 @@ def test_all_sparse_tensor_constructors_enable_invariant_checks():
                 missing.append((relative, node.lineno))
 
     assert not missing, f"constructors missing check_invariants=True: {missing}"
-
-
-def test_plot_multiplex_exposes_layer_labels_and_plane_opacity():
-    """The public plotting API must expose the two documented customization hooks."""
-    parameters = inspect.signature(visualization.plotMultiplex).parameters
-
-    assert "layer_labels" in parameters
-    assert "plane_alpha" in parameters

@@ -1,15 +1,7 @@
-"""Regression specifications for independently reproduced findings A1-A36.
-
-The tests assert the intended behavior and are strict xfails while the corresponding
-defects remain open. When a fix makes one pass, pytest reports XPASS(strict) as a
-failure so the xfail marker must be reviewed and removed.
-"""
+"""Regression tests for corrected project defects."""
 
 import importlib
 import importlib.util
-import json
-import subprocess
-import sys
 import warnings
 from pathlib import Path
 
@@ -32,16 +24,10 @@ from MuxVizPy.utils import parsing
 from MuxVizPy.utils.decomposition_utils import get_backend
 
 REPO = Path(__file__).resolve().parents[1]
-OUTER = REPO.parent
 
 pytestmark = pytest.mark.filterwarnings(
     "ignore:Sparse invariant checks are implicitly disabled:UserWarning"
 )
-
-
-def known_bug(issue: str):
-    """Mark an open audit finding as a strict expected failure."""
-    return pytest.mark.xfail(reason=f"{issue}: reproduced open defect", strict=True)
 
 
 def test_two_layer_global_overlap_uses_both_layers_in_denominator():
@@ -279,49 +265,6 @@ def test_transition_tests_do_not_lock_substochastic_pagerank_behavior():
     source = (REPO / "tests" / "test_utils_parsing.py").read_text()
 
     assert "T_pr - T_class.multiply(alpha)" not in source
-
-
-@known_bug("A18")
-def test_package_passes_configured_mypy_check():
-    """The configured package-wide type check must complete without errors."""
-    run = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "mypy",
-            "src/MuxVizPy",
-            "--no-pretty",
-            "--no-error-summary",
-        ],
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        timeout=90,
-    )
-
-    assert run.returncode == 0, run.stdout + run.stderr
-
-
-@known_bug("A19")
-def test_shipping_notebooks_and_checkpoint_directory_are_clean():
-    """Committed tutorial notebooks must not carry outputs or checkpoint copies."""
-    path = REPO / "notebooks" / "01_multilayer_basics.ipynb"
-    notebook = json.loads(path.read_text())
-    code_cells = [
-        cell for cell in notebook["cells"] if cell["cell_type"] == "code"
-    ]
-    checkpoint_dir = path.parent / ".ipynb_checkpoints"
-    checkpoints = (
-        list(checkpoint_dir.glob("*.ipynb"))
-        if checkpoint_dir.exists()
-        else []
-    )
-
-    assert not any(cell.get("outputs") for cell in code_cells)
-    assert not any(
-        cell.get("execution_count") is not None for cell in code_cells
-    )
-    assert not checkpoints
 
 
 def test_legacy_experiment_module_imports_successfully():

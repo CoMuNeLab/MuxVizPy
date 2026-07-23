@@ -480,6 +480,49 @@ class TestVersatilityBackendComparison:
         assert np.all(mv >= 0)
         assert np.all(hn >= 0)
 
+    def test_unknown_degree_backend_raises(self):
+        with pytest.raises(ValueError, match="backend"):
+            versatility.get_multi_degree(
+                sp.eye(2, format="csr"),
+                layers=1,
+                nodes=2,
+                backend="unknown",
+            )
+
+    def test_muxvizpy_degree_rejects_directed_flag(self):
+        adjacency = sp.csr_matrix([[0, 1], [0, 0]], dtype=float)
+
+        for is_directed in (True, False):
+            with pytest.raises(ValueError, match="is_directed|hornet"):
+                versatility.get_multi_degree(
+                    adjacency,
+                    layers=1,
+                    nodes=2,
+                    backend="muxvizpy",
+                    is_directed=is_directed,
+                )
+
+    def test_hornet_degree_honors_directed_flag(self):
+        adjacency = sp.csr_matrix([[0, 1], [0, 0]], dtype=float)
+
+        directed = versatility.get_multi_degree(
+            adjacency,
+            layers=1,
+            nodes=2,
+            backend="hornet",
+            is_directed=True,
+        )
+        undirected = versatility.get_multi_degree(
+            adjacency,
+            layers=1,
+            nodes=2,
+            backend="hornet",
+            is_directed=False,
+        )
+
+        np.testing.assert_array_equal(directed, [1.0, 1.0])
+        np.testing.assert_array_equal(undirected, [0.5, 0.5])
+
 # ============================================================================
 # Reference — comparison against pre-computed muxViz R results
 # ============================================================================

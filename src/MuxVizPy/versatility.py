@@ -8,7 +8,7 @@ from graph_tool import centrality #, inference
 import graph_tool.correlations as gtcorr
 import graph_tool.clustering as gtclust
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 from MuxVizPy.utils import approx_utils
 from MuxVizPy.utils.approx_utils import (
@@ -881,7 +881,8 @@ def compute_multi_authority_centrality(
 
 def get_multi_degree(
     supra: sps.spmatrix, layers: int, nodes: int,
-    is_directed: bool = True, backend: str = "muxvizpy",
+    is_directed: bool | None = None,
+    backend: Literal["muxvizpy", "hornet"] = "muxvizpy",
     logger: Optional[logging.Logger] = None,
 ) -> np.ndarray:
     """
@@ -895,8 +896,10 @@ def get_multi_degree(
         Number of layers.
     nodes : int
         Number of physical nodes.
-    is_directed : bool
-        If True, returns in + out degree. If False, returns (in + out) / 2.
+    is_directed : bool, optional
+        For the ``"hornet"`` backend, True returns in + out degree and False
+        returns half that value. The default is True. This argument does not
+        apply to the ``"muxvizpy"`` aggregate-degree definition.
     backend : str
         "muxvizpy" (aggregate network column sum) or "hornet" (in + out on
         intra-layer blocks, matching muxViz R semantics).
@@ -907,8 +910,24 @@ def get_multi_degree(
     np.ndarray
         Degree vector for physical nodes (aggregated across layers).
     """
+    if backend not in {"muxvizpy", "hornet"}:
+        raise ValueError(
+            f"Unknown backend {backend!r}; expected 'muxvizpy' or 'hornet'"
+        )
     if backend == "hornet":
-        return compute_multi_degree(supra, nodes, layers, is_directed=is_directed, logger=logger)
+        directed = True if is_directed is None else is_directed
+        return compute_multi_degree(
+            supra,
+            nodes,
+            layers,
+            is_directed=directed,
+            logger=logger,
+        )
+    if is_directed is not None:
+        raise ValueError(
+            "is_directed applies only to backend='hornet'; "
+            "the 'muxvizpy' backend uses aggregate degree"
+        )
     tensor = parsing_utils.build_edge_colored_matrices_from_supra_adjacency_matrix(supra, layers)
     agg_mat = parsing_utils.get_aggregate_network(tensor, return_mat=True)
     centrality_vector = np.array(agg_mat.sum(axis=0)).ravel()

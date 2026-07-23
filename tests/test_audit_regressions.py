@@ -222,7 +222,6 @@ def test_empty_adjacency_has_zero_average_global_clustering():
     assert result == pytest.approx(0.0)
 
 
-@known_bug("A13")
 def test_unknown_degree_backend_is_rejected():
     """A backend typo must not silently execute the default implementation."""
     adjacency = sp.csr_matrix([[0, 1], [1, 0]], dtype=float)
@@ -594,25 +593,16 @@ def test_percolation_accepts_documented_removal_order():
     )
 
 
-@known_bug("A36")
-def test_default_degree_backend_honors_documented_directed_flag():
-    """The documented flag must distinguish in+out from half in+out degree."""
+def test_default_degree_backend_rejects_inapplicable_directed_flag():
+    """The aggregate-degree backend must not silently ignore a public flag."""
     adjacency = sp.csr_matrix(np.array([[0, 1], [0, 0]], dtype=float))
 
-    directed = versatility.get_multi_degree(
-        adjacency,
-        layers=1,
-        nodes=2,
-        is_directed=True,
-        backend="muxvizpy",
-    )
-    undirected = versatility.get_multi_degree(
-        adjacency,
-        layers=1,
-        nodes=2,
-        is_directed=False,
-        backend="muxvizpy",
-    )
-
-    np.testing.assert_array_equal(directed, [1.0, 1.0])
-    np.testing.assert_array_equal(undirected, [0.5, 0.5])
+    for is_directed in (True, False):
+        with pytest.raises(ValueError, match="is_directed|hornet"):
+            versatility.get_multi_degree(
+                adjacency,
+                layers=1,
+                nodes=2,
+                is_directed=is_directed,
+                backend="muxvizpy",
+            )

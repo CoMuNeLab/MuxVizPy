@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 import graph_tool as gt
 import matplotlib.pyplot as plt
 import numpy as np
@@ -76,6 +78,9 @@ def plotMultiplex(
     min_size=4.0,
     max_size=50.0,
     size_mode="global",  # "global" (default) or "per_layer"
+    layer_labels: Sequence[str] | None = None,
+    plane_alpha: float = 0.5,
+    layer_spacing: float = 1.0,
 ):
     """
     3D layered plot of a multiplex. Only intra-layer edges are drawn.
@@ -84,14 +89,27 @@ def plotMultiplex(
       - "global": size by total degree across ALL layers (same size in every layer)
       - "per_layer": size by degree within the current layer
       Zero-degree nodes are still shown with `min_size`.
+
+    Layer display:
+      - `layer_labels`: optional sequence containing one label per layer
+      - `plane_alpha`: layer-plane opacity between 0 and 1
+      - `layer_spacing`: relative width of the layer axis; values below 1
+        place the layers closer together
     """
+    layer_count = len(g_list)
+    labels = None if layer_labels is None else list(layer_labels)
+    if labels is not None and len(labels) != layer_count:
+        raise ValueError("layer_labels must contain one label per layer")
+    if not 0 <= plane_alpha <= 1:
+        raise ValueError("plane_alpha must be between 0 and 1")
+    if not np.isfinite(layer_spacing) or layer_spacing <= 0:
+        raise ValueError("layer_spacing must be positive and finite")
+
     # ----- Layout -----
     if positions is None:
         import graph_tool.draw as gtdraw  # local to avoid circular imports
         positions = gtdraw.sfdp_layout(g_agg).get_2d_array([0, 1])
 
-    L = len(g_list)
-    N = positions.shape[1]
     rng = np.random.default_rng(1432)
 
     # ----- Degrees & sizes -----
@@ -150,18 +168,35 @@ def plotMultiplex(
 
         # Layer plane (neutral)
         Y = np.full_like(xx, layer_idx, dtype=float)
-        ax.plot_surface(xx, Y, zz, rstride=1, cstride=1, alpha=0.5)
+        ax.plot_surface(
+            xx,
+            Y,
+            zz,
+            rstride=1,
+            cstride=1,
+            alpha=plane_alpha,
+        )
+        if labels is not None:
+            ax.text(
+                xmin,
+                layer_idx,
+                zmax,
+                labels[layer_idx],
+                clip_on=False,
+                fontsize=9,
+                ha="right",
+                va="bottom",
+            )
 
     # Cosmetics & alignment
     ax.set_xlim(xmin, xmax)
-    ax.set_ylim(0, L - 1)
+    ax.set_ylim(0, layer_count - 1)
     ax.set_zlim(zmin, zmax)
-    ax.set_xlabel("X")
-    ax.set_ylabel("Layer")
-    ax.set_zlabel("Z")
     ax.axis("off")
     ax.set_proj_type("ortho")
-    ax.set_box_aspect((xmax - xmin, L, zmax - zmin))
+    ax.set_box_aspect(
+        (xmax - xmin, layer_count * layer_spacing, zmax - zmin)
+    )
     ax.view_init(elev=elev, azim=azim)
 
     plt.show()

@@ -309,6 +309,9 @@ def get_SP_similarity_matrix(supra: sps.spmatrix, layers: int, nodes: int) -> np
         frobenius_norm[l1,l2] = np.linalg.norm(distance_list[l1]-distance_list[l2])
         frobenius_norm[l2,l1] = frobenius_norm[l1,l2]
 
-    frobenius_norm = 1-(frobenius_norm/np.max(frobenius_norm))
+    scale = float(np.max(frobenius_norm))
+    if scale == 0.0:
+      return np.ones((layers, layers), dtype=float)
+    frobenius_norm = 1-(frobenius_norm/scale)
 
     return frobenius_norm

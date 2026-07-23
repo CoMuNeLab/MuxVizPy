@@ -114,7 +114,6 @@ def test_physical_components_are_not_anchored_only_to_layer_zero():
     assert labels[0] == labels[1]
 
 
-@known_bug("A6")
 def test_identical_layers_have_finite_shortest_path_similarity():
     """A zero maximum layer distance must not produce division by zero."""
     path = sp.csr_matrix(
@@ -122,13 +121,16 @@ def test_identical_layers_have_finite_shortest_path_similarity():
     )
     supra = sp.block_diag([path, path], format="csr")
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        similarity = topology.get_SP_similarity_matrix(
-            supra, layers=2, nodes=3
-        )
+    similarity = topology.get_SP_similarity_matrix(
+        supra, layers=2, nodes=3
+    )
+    single_layer = topology.get_SP_similarity_matrix(
+        path, layers=1, nodes=3
+    )
 
     assert np.all(np.isfinite(similarity))
+    np.testing.assert_array_equal(similarity, np.ones((2, 2)))
+    np.testing.assert_array_equal(single_layer, np.ones((1, 1)))
 
 
 @known_bug("A7")

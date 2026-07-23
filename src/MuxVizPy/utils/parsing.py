@@ -14,6 +14,10 @@ try:
 except ImportError:
     torch = None
 
+# Categorical coupling is materialized explicitly in several temporary arrays.
+# Keep its entry count bounded before allocating those arrays.
+MAX_CATEGORICAL_COUPLING_EDGES = 1_000_000
+
 
 def _require_torch():
     if torch is None:
@@ -37,13 +41,33 @@ def build_interlayer_coupling_from_tensor(t: torch.Tensor, omega: float, kind: s
         A sparse tensor of shape (num_nodes, num_layers, num_nodes, num_layers)
             representing the interlayer coupling.
     """
+    _require_torch()
     kind = kind.lower().strip()
-    n, l = t.shape[0], t.shape[1]
-    if len(t.shape) != 4 or t.shape[0] != n or t.shape[2] != n or t.shape[1] != l or t.shape[3] != l:
-        raise ValueError("Input tensor must have shape (num_nodes, num_layers, num_nodes, num_layers).")
     if not t.is_sparse:
         raise NotImplementedError("Input tensor must be a sparse tensor.")
-    
+
+    if (
+        len(t.shape) != 4
+        or t.shape[0] != t.shape[2]
+        or t.shape[1] != t.shape[3]
+    ):
+        raise ValueError(
+            "Input tensor must have shape "
+            "(num_nodes, num_layers, num_nodes, num_layers)."
+        )
+
+    n, l = t.shape[0], t.shape[1]
+    if kind not in {"ordered", "categorical", "temporal"}:
+        raise NotImplementedError(f"Unknown coupling type: {kind}")
+    if n == 0 or l <= 1:
+        return torch.sparse_coo_tensor(
+            torch.empty((4, 0), dtype=torch.long),
+            torch.empty((0,), dtype=torch.float32),
+            size=(n, l, n, l),
+            dtype=torch.float32,
+            check_invariants=True,
+        ).coalesce()
+
     if kind == "ordered":
         # Vectorized version for chain coupling (undirected)
         rows = np.arange(n)
@@ -65,11 +89,12 @@ def build_interlayer_coupling_from_tensor(t: torch.Tensor, omega: float, kind: s
 
     elif kind == "categorical":
         # All-to-all undirected coupling: node j in layer i ↔ node j in layer k, for all i ≠ k
-        assert n * l < 10000, (
-            "Too many edges for categorical coupling; "
-            "consider using a smaller network or a different coupling type. "
-            "Consider using only a layer-by-layer coupling and handle it as layer couples."
-        )
+        edge_count = n * l * (l - 1)
+        if edge_count > MAX_CATEGORICAL_COUPLING_EDGES:
+            raise ValueError(
+                f"categorical coupling requires {edge_count:,} entries; "
+                f"limit is {MAX_CATEGORICAL_COUPLING_EDGES:,}"
+            )
 
         # For each node, create all (layer_from, layer_to) pairs with layer_from != layer_to
         nodes = np.arange(n)
@@ -101,9 +126,6 @@ def build_interlayer_coupling_from_tensor(t: torch.Tensor, omega: float, kind: s
         indices = torch.tensor(indices, dtype=torch.long).t().contiguous()
         values = torch.full((indices.shape[1],), omega, dtype=torch.float32)
 
-    else:
-        raise NotImplementedError(f"Unknown coupling type: {kind}")
-    
     t_coupling = torch.sparse_coo_tensor(
         indices,
         values,

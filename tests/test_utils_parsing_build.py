@@ -135,7 +135,12 @@ class TestInterlayerCouplingTensor:
         """Create an empty sparse tensor with the right shape."""
         indices = torch.empty((4, 0), dtype=torch.long)
         values = torch.empty(0, dtype=torch.float32)
-        return torch.sparse_coo_tensor(indices, values, size=(n, l, n, l))
+        return torch.sparse_coo_tensor(
+            indices,
+            values,
+            size=(n, l, n, l),
+            check_invariants=True,
+        )
 
     @pytest.mark.parametrize("kind", ["ordered", "categorical", "temporal"])
     def test_shape(self, kind):
@@ -174,6 +179,53 @@ class TestInterlayerCouplingTensor:
                         assert dense[node, li, node, lj] == 1.0
                     else:
                         assert dense[node, li, node, lj] == 0.0
+
+    def test_categorical_limit_uses_allocated_entry_count(self, monkeypatch):
+        tensor = self._make_empty_intra_tensor(1, 3)
+        monkeypatch.setattr(
+            parsing,
+            "MAX_CATEGORICAL_COUPLING_EDGES",
+            5,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match=r"requires 6 entries; limit is 5",
+        ):
+            parsing.build_interlayer_coupling_from_tensor(
+                tensor,
+                omega=1.0,
+                kind="categorical",
+            )
+
+    def test_categorical_limit_allows_exact_boundary(self, monkeypatch):
+        tensor = self._make_empty_intra_tensor(1, 3)
+        monkeypatch.setattr(
+            parsing,
+            "MAX_CATEGORICAL_COUPLING_EDGES",
+            6,
+        )
+
+        coupling = parsing.build_interlayer_coupling_from_tensor(
+            tensor,
+            omega=1.0,
+            kind="categorical",
+        )
+
+        assert coupling._nnz() == 6
+
+    @pytest.mark.parametrize("kind", ["ordered", "categorical", "temporal"])
+    def test_single_layer_coupling_is_empty(self, kind):
+        tensor = self._make_empty_intra_tensor(10_000, 1)
+
+        coupling = parsing.build_interlayer_coupling_from_tensor(
+            tensor,
+            omega=1.0,
+            kind=kind,
+        )
+
+        assert coupling.shape == tensor.shape
+        assert coupling._nnz() == 0
 
     def test_temporal_directed(self):
         n, l = 2, 3

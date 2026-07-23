@@ -425,7 +425,6 @@ def test_empty_sparse_tensor_has_an_empty_laplacian():
     assert laplacian._nnz() == 0
 
 
-@known_bug("A26")
 def test_single_layer_categorical_coupling_is_empty_without_size_rejection():
     """A large single-layer network needs zero categorical coupling entries."""
     tensor = torch.sparse_coo_tensor(
@@ -443,7 +442,6 @@ def test_single_layer_categorical_coupling_is_empty_without_size_rejection():
     assert coupling._nnz() == 0
 
 
-@known_bug("A27")
 def test_interlayer_tensor_builder_uses_optional_torch_guard(monkeypatch):
     """Missing torch must produce the package's actionable ImportError."""
     real_torch = parsing.torch

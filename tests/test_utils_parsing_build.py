@@ -314,6 +314,62 @@ class TestTensorGraphToolRoundtrip:
                 err_msg=f"Layer {i} adjacency mismatch after roundtrip",
             )
 
+    def test_tensor_to_graph_preserves_weights(self):
+        indices = torch.tensor([[0], [0], [1], [0]], dtype=torch.long)
+        tensor = torch.sparse_coo_tensor(
+            indices,
+            torch.tensor([7.0]),
+            size=(2, 1, 2, 1),
+            check_invariants=True,
+        )
+
+        graph = parsing.build_list_of_graphs_from_tensor(tensor)[0]
+        edge = graph.edge(0, 1)
+
+        assert edge is not None
+        assert graph.ep["weight"][edge] == pytest.approx(7.0)
+
+    def test_undirected_conversion_deduplicates_reciprocal_entries(self):
+        indices = torch.tensor(
+            [[0, 1], [0, 0], [1, 0], [0, 0]],
+            dtype=torch.long,
+        )
+        tensor = torch.sparse_coo_tensor(
+            indices,
+            torch.tensor([2.0, 2.0]),
+            size=(2, 1, 2, 1),
+            check_invariants=True,
+        )
+
+        graph = parsing.build_list_of_graphs_from_tensor(
+            tensor,
+            directed=False,
+        )[0]
+
+        assert not graph.is_directed()
+        assert graph.num_edges() == 1
+        edge = graph.edge(0, 1)
+        assert edge is not None
+        assert graph.ep["weight"][edge] == pytest.approx(2.0)
+
+    def test_undirected_conversion_rejects_asymmetric_reciprocal_weights(self):
+        indices = torch.tensor(
+            [[0, 1], [0, 0], [1, 0], [0, 0]],
+            dtype=torch.long,
+        )
+        tensor = torch.sparse_coo_tensor(
+            indices,
+            torch.tensor([2.0, 3.0]),
+            size=(2, 1, 2, 1),
+            check_invariants=True,
+        )
+
+        with pytest.raises(ValueError, match="equal weights"):
+            parsing.build_list_of_graphs_from_tensor(
+                tensor,
+                directed=False,
+            )
+
     def test_empty_graphs_raises(self):
         with pytest.raises(ValueError):
             parsing.build_tensor_from_list_of_graphs([])

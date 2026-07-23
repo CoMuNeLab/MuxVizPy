@@ -213,7 +213,7 @@ def _adjacency_from_graph(
     graph: gt.Graph,
     weight: str | None = None,
 ) -> sp.spmatrix:
-    """Return graph adjacency, preserving an explicit or standard weight."""
+    """Return source-by-target adjacency with an optional edge weight."""
     property_name = weight
     if property_name is None and "weight" in graph.ep:
         property_name = "weight"
@@ -226,7 +226,10 @@ def _adjacency_from_graph(
                 f"Graph has no edge property named {property_name!r}"
             )
         weight_property = graph.ep[property_name]
-    return gt.spectral.adjacency(graph, weight=weight_property)
+
+    # graph-tool stores adjacency coordinates as (target, source), while
+    # MuxVizPy matrices and tensors use (source, target).
+    return gt.spectral.adjacency(graph, weight=weight_property).transpose().tocsr()
 
 
 def get_node_tensor_from_network_list(
@@ -450,37 +453,91 @@ def build_aggregate_network_from_tensor(t: torch.Tensor, kind="sum") -> sp.csr_m
     else:
         raise ValueError(f"Unknown aggregation kind: {kind}")
     
-def build_list_of_graphs_from_tensor(t: torch.Tensor) -> list[gt.Graph]:
+def build_list_of_graphs_from_tensor(
+    t: torch.Tensor,
+    *,
+    directed: bool = True,
+) -> list[gt.Graph]:
     """
     Build a list of Graphs from a tensor of sparse interactions.
     Args:
         t: A sparse tensor of shape (num_nodes, num_layers, num_nodes, num_layers)
             representing the multi-layer network.
+        directed: Whether to create directed graphs. Tensor coordinates cannot
+            distinguish an undirected edge from two reciprocal directed edges,
+            so callers must select the intended graph type.
     Returns:
-        A list of Graphs representing the layers of the multi-layer network. Each graph will have the same number of nodes.
+        A list of Graphs representing the layers of the multi-layer network.
+        Cross-layer interactions are excluded. Each graph has the same number
+        of nodes and a ``"weight"`` edge property.
     """
     _require_torch()
     if not t.is_sparse:
         raise NotImplementedError("Input tensor must be a sparse tensor.")
-    
-    n, l = t.shape[0], t.shape[1]
-    if len(t.shape) != 4 or t.shape[0] != n or t.shape[2] != n or t.shape[1] != l or t.shape[3] != l:
-        raise ValueError("Input tensor must have shape (num_nodes, num_layers, num_nodes, num_layers).")
 
+    if (
+        len(t.shape) != 4
+        or t.shape[0] != t.shape[2]
+        or t.shape[1] != t.shape[3]
+    ):
+        raise ValueError(
+            "Input tensor must have shape "
+            "(num_nodes, num_layers, num_nodes, num_layers)."
+        )
+
+    n, num_layers = t.shape[0], t.shape[1]
     indices, values = _nonzero_tensor_entries(t)
 
-    # Create a list of adjacency matrices for each layer
-    adj_matrices = [sp.lil_matrix((n, n)) for _ in range(l)]
-    for idx in range(indices.shape[1]):
-        i, k, j, l_ = indices[:, idx]
-        weight = values[idx].item()
-        adj_matrices[k][i, j] = weight
+    directed_edges: list[list[tuple[int, int, float]]] = [
+        [] for _ in range(num_layers)
+    ]
+    undirected_edges: list[dict[tuple[int, int], float]] = [
+        {} for _ in range(num_layers)
+    ]
 
-    # Convert adjacency matrices to Graphs
-    graphs = []
-    for adj in adj_matrices:
-        g = gt.Graph(adj.tocsr())
-        graphs.append(g)
+    for idx in range(indices.shape[1]):
+        node_from, layer_from, node_to, layer_to = (
+            int(value.item()) for value in indices[:, idx]
+        )
+        if layer_from != layer_to:
+            continue
+
+        edge_weight = float(values[idx].item())
+        if directed:
+            directed_edges[layer_from].append(
+                (node_from, node_to, edge_weight)
+            )
+            continue
+
+        edges = undirected_edges[layer_from]
+        edge = tuple(sorted((node_from, node_to)))
+        if edge in edges and not np.isclose(edges[edge], edge_weight):
+            raise ValueError(
+                "Reciprocal tensor entries must have equal weights when "
+                "building undirected graphs."
+            )
+        edges[edge] = edge_weight
+
+    graphs: list[gt.Graph] = []
+    for layer in range(num_layers):
+        graph = gt.Graph(directed=directed)
+        graph.add_vertex(n)
+        weight_property = graph.new_edge_property("double")
+
+        entries = (
+            directed_edges[layer]
+            if directed
+            else [
+                (source, target, weight)
+                for (source, target), weight in undirected_edges[layer].items()
+            ]
+        )
+        for source, target, edge_weight in entries:
+            edge = graph.add_edge(source, target)
+            weight_property[edge] = edge_weight
+
+        graph.ep["weight"] = weight_property
+        graphs.append(graph)
 
     return graphs
 

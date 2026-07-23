@@ -133,7 +133,6 @@ def test_identical_layers_have_finite_shortest_path_similarity():
     np.testing.assert_array_equal(single_layer, np.ones((1, 1)))
 
 
-@known_bug("A7")
 def test_interlayer_tensor_edges_do_not_leak_into_intralayer_graphs():
     """A pure layer-0 to layer-1 edge must leave both layer graphs empty."""
     tensor = torch.sparse_coo_tensor(
@@ -357,12 +356,15 @@ def test_read_component_preserves_newline_free_final_token(tmp_path):
     np.testing.assert_array_equal(result, [12, 34])
 
 
-@known_bug("A22")
 def test_directed_graph_tensor_conversions_preserve_edge_orientation():
     """A directed 0 -> 1 edge must remain 0 -> 1 in either conversion direction."""
     graph = gt.Graph(directed=True)
     graph.add_vertex(2)
     graph.add_edge(0, 1)
+
+    adjacency = parsing.get_node_tensor_from_network_list([graph])[0]
+    assert adjacency[0, 1] == 1
+    assert adjacency[1, 0] == 0
 
     tensor = parsing.build_tensor_from_list_of_graphs([graph]).coalesce()
     assert tensor.indices().T.tolist() == [[0, 0, 1, 0]]

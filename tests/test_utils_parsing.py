@@ -25,6 +25,12 @@ L = SAMPLE_N_LAYERS
 NL = N * L
 
 
+@pytest.fixture
+def sample_undirected_adjacency(sample_adjacency):
+    """Undirected form of the directed conversion fixture for BGS density tests."""
+    return sample_adjacency.maximum(sample_adjacency.T).tocsr()
+
+
 # ============================================================================
 # Correctness — format conversions
 # ============================================================================
@@ -308,14 +314,20 @@ class TestLaplacianAndDensity:
         L = parsing.build_laplacian_matrix_from_adjacency_matrix(sample_adjacency)
         assert L.shape == sample_adjacency.shape
 
-    def test_density_trace_one(self, sample_adjacency):
-        rho = parsing.build_density_bgs_from_adjacency_matrix(sample_adjacency)
+    def test_density_trace_one(self, sample_undirected_adjacency):
+        rho = parsing.build_density_bgs_from_adjacency_matrix(
+            sample_undirected_adjacency
+        )
         assert rho.diagonal().sum() == pytest.approx(1.0, abs=1e-12)
 
-    def test_density_diagonal_nonnegative(self, sample_adjacency):
-        rho = parsing.build_density_bgs_from_adjacency_matrix(sample_adjacency)
+    def test_density_diagonal_nonnegative(self, sample_undirected_adjacency):
+        rho = parsing.build_density_bgs_from_adjacency_matrix(
+            sample_undirected_adjacency
+        )
         assert np.all(rho.diagonal() >= 0.0)
 
-    def test_density_shape(self, sample_adjacency):
-        rho = parsing.build_density_bgs_from_adjacency_matrix(sample_adjacency)
-        assert rho.shape == sample_adjacency.shape
+    def test_density_shape(self, sample_undirected_adjacency):
+        rho = parsing.build_density_bgs_from_adjacency_matrix(
+            sample_undirected_adjacency
+        )
+        assert rho.shape == sample_undirected_adjacency.shape

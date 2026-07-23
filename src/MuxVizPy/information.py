@@ -23,6 +23,26 @@ def compute_vn_entropy(density: sp.spmatrix) -> float:
     float
         Von Neumann entropy (nats, base-e logarithm).
     """
+    density = density.tocsr(copy=True)
+    if density.shape[0] != density.shape[1]:
+        raise ValueError(f"Density matrix must be square; got shape {density.shape}.")
+
+    density.sum_duplicates()
+    density.eliminate_zeros()
+    if np.iscomplexobj(density.data):
+        raise ValueError("Density matrix must contain real values.")
+    if not np.all(np.isfinite(density.data)):
+        raise ValueError("Density matrix must contain finite values.")
+
+    difference = (density - density.T).tocsr()
+    difference.eliminate_zeros()
+    if difference.nnz:
+        raise ValueError("Density matrix must be symmetric.")
+
+    trace = float(density.diagonal().sum())
+    if not np.isclose(trace, 1.0, rtol=1e-10, atol=1e-12):
+        raise ValueError(f"Density matrix must have trace 1; got {trace}.")
+
     N = density.shape[0]
     if N == 1:
         return 0.0
@@ -33,6 +53,8 @@ def compute_vn_entropy(density: sp.spmatrix) -> float:
     eigenvalues = eigsh(density, k=k, which="LM", return_eigenvectors=False)
     last = 1.0 - eigenvalues.sum()
     all_eigenvalues = np.append(eigenvalues, last)
+    if np.any(all_eigenvalues < -1e-10):
+        raise ValueError("Density matrix must be positive semidefinite.")
 
     pos = all_eigenvalues[all_eigenvalues > 0]
     return float(-np.sum(pos * np.log(pos)))

@@ -541,7 +541,6 @@ def test_exact_hits_rejects_or_corrects_signed_dominant_vectors(monkeypatch):
     assert np.all(authorities >= 0)
 
 
-@known_bug("A33")
 def test_bgs_density_rejects_directed_adjacency():
     """A directed row-Laplacian is not a valid symmetric BGS density matrix."""
     directed = sp.csr_matrix(

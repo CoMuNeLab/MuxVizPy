@@ -901,16 +901,38 @@ def build_density_bgs_from_adjacency_matrix(
         adj: sp.csr_matrix,
 ) -> sp.csr_matrix:
     """
-    Build supra-density matrix from a supra-adjacency matrix (NL x NL).
+    Build a BGS density matrix from an undirected adjacency matrix.
 
     Density matrix is defined as rho = L / Tr(L), where L is the Laplacian.
+    The adjacency must be square, real, finite, nonnegative, and symmetric.
     """
     if not sp.isspmatrix_csr(adj):
         adj = adj.tocsr(copy=False)
+    else:
+        adj = adj.copy()
+
+    if adj.shape[0] != adj.shape[1]:
+        raise ValueError(f"Adjacency matrix must be square; got shape {adj.shape}.")
+
+    adj.sum_duplicates()
+    adj.eliminate_zeros()
+    if np.iscomplexobj(adj.data):
+        raise ValueError("BGS density requires real adjacency weights.")
+    if not np.all(np.isfinite(adj.data)):
+        raise ValueError("BGS density requires finite adjacency weights.")
+    if np.any(adj.data < 0):
+        raise ValueError("BGS density requires nonnegative adjacency weights.")
+
+    difference = (adj - adj.T).tocsr()
+    difference.eliminate_zeros()
+    if difference.nnz:
+        raise ValueError(
+            "BGS density requires an undirected symmetric adjacency matrix."
+        )
 
     den = build_laplacian_matrix_from_adjacency_matrix(adj)
     trace = den.diagonal().sum()
-    if trace == 0:
+    if not np.isfinite(trace) or trace <= 0:
         raise ValueError("Adjacency matrix has no edges; Laplacian trace is zero.")
     return den / trace
 

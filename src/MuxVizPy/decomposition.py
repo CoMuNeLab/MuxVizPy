@@ -1,12 +1,26 @@
 from __future__ import annotations
+
 import logging
 import warnings
 from typing import Literal
 
 import numpy as np
-import torch
 
-from MuxVizPy.utils.decomposition_utils import get_backend, CPBackend
+from MuxVizPy.utils.decomposition_utils import CPBackend, get_backend
+
+try:
+    import torch
+except ImportError:
+    torch = None  # type: ignore[assignment]
+
+
+def _require_torch():
+    if torch is None:
+        raise ImportError(
+            "torch is required for this function. "
+            "Install it with: uv pip install torch --index-url "
+            "https://download.pytorch.org/whl/cpu"
+        )
 
 # ---- helper functions -----
 
@@ -292,6 +306,8 @@ def sparse_cp_decomposition(
         >>> rank = 5
         >>> A, B, C, D, lambdas = sparse_cp_decomposition(tensor, rank)
     """
+    _require_torch()
+
     # Initialize the backend
     be = get_backend(backend)
 

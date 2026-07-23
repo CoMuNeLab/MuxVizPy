@@ -751,8 +751,9 @@ def build_transition_matrix_from_adjacency_matrix(
     Build supra-transition matrix from a supra-adjacency matrix (NL x NL).
 
     Implemented kinds:
-        - 'classical': row-stochastic D^{-1} A; rows with zero out-strength become uniform 1/NL.
-        - 'pagerank': alpha * (row-stochastic) + (1-alpha)/NL; zero rows become uniform 1/NL.
+        - 'classical': row-stochastic D^{-1} A; zero rows remain zero.
+        - 'pagerank': alpha * (row-stochastic) + (1-alpha)/NL; zero
+          rows become uniform 1/NL.
 
     Notes:
         - Teleportation term makes the matrix dense; returned as CSR for consistency.
@@ -783,8 +784,13 @@ def build_transition_matrix_from_adjacency_matrix(
         if not (0.0 < a <= 1.0):
             raise ValueError("alpha must be in (0, 1] for pagerank")
 
-        P = P.multiply(a).tocsr()
-        return P
+        teleportation = np.full(
+            (NL, NL),
+            (1.0 - a) / NL,
+            dtype=np.float64,
+        )
+        teleportation[~nz, :] = 1.0 / NL
+        return (P.multiply(a) + sp.csr_matrix(teleportation)).tocsr()
 
     elif kind == "diffusive":
         raise NotImplementedError("type='diffusive' not implemented yet")

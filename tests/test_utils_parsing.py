@@ -7,20 +7,18 @@ Classes:
     TestLaplacianAndDensity  — Laplacian L = D - A and density tr(ρ) = 1
 """
 
-import pytest
 import numpy as np
 import polars as pl
+import pytest
 import scipy.sparse as sp
 import torch
-
-from MuxVizPy.utils import parsing
 from conftest import (
     SAMPLE_EDGES,
-    SAMPLE_N_NODES,
     SAMPLE_N_LAYERS,
-    assert_arrays_close,
+    SAMPLE_N_NODES,
 )
 
+from MuxVizPy.utils import parsing
 
 N = SAMPLE_N_NODES
 L = SAMPLE_N_LAYERS
@@ -183,8 +181,9 @@ class TestTransitionMatrix:
         )
         assert T.min() >= 0.0
 
-    def test_pagerank_scaled_by_alpha(self, sample_adjacency, n_nodes, n_layers):
-        """PageRank = alpha * classical for rows with outgoing edges."""
+    def test_pagerank_includes_teleportation_and_dangling_mass(
+        self, sample_adjacency, n_nodes, n_layers
+    ):
         alpha = 0.85
         T_class = parsing.build_transition_matrix_from_adjacency_matrix(
             sample_adjacency, n_nodes, n_layers, kind="classical"
@@ -192,8 +191,17 @@ class TestTransitionMatrix:
         T_pr = parsing.build_transition_matrix_from_adjacency_matrix(
             sample_adjacency, n_nodes, n_layers, kind="pagerank", alpha=alpha
         )
-        diff = (T_pr - T_class.multiply(alpha)).tocsr()
-        assert abs(diff).max() < 1e-10
+
+        expected = alpha * T_class.toarray()
+        expected += (1.0 - alpha) / NL
+        dangling = np.asarray(T_class.sum(axis=1)).ravel() == 0.0
+        expected[dangling] += alpha / NL
+
+        np.testing.assert_allclose(T_pr.toarray(), expected)
+        np.testing.assert_allclose(
+            np.asarray(T_pr.sum(axis=1)).ravel(),
+            np.ones(NL),
+        )
 
     def test_pagerank_invalid_alpha_raises(self, sample_adjacency, n_nodes, n_layers):
         with pytest.raises(ValueError):

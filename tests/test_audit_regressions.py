@@ -338,17 +338,18 @@ def test_legacy_experiment_module_imports_successfully():
     assert hasattr(module, "VirusMultiplex")
 
 
-@known_bug("A21")
 def test_read_component_preserves_newline_free_final_token(tmp_path):
-    """The final digit must not be sliced off when a file lacks a terminal newline."""
+    """Component rows must support normal whitespace and a final line without newline."""
     from MuxVizPy.utils.misc import readComponent
 
     path = tmp_path / "component_without_newline.txt"
-    path.write_text("12 34")
+    path.write_bytes(b"12  34\r\n\n56\t78")
 
-    result = readComponent(str(path))[0]
+    result = readComponent(str(path))
 
-    np.testing.assert_array_equal(result, [12, 34])
+    np.testing.assert_array_equal(result[0], [12, 34])
+    np.testing.assert_array_equal(result[1], [])
+    np.testing.assert_array_equal(result[2], [56, 78])
 
 
 def test_directed_graph_tensor_conversions_preserve_edge_orientation():

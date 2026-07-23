@@ -569,7 +569,6 @@ def test_cp_reconstruction_error_includes_implicit_zero_coordinates():
     assert error == pytest.approx(np.sqrt(15.0))
 
 
-@known_bug("A35")
 def test_percolation_accepts_documented_removal_order():
     """Center-first removal of a star must immediately reduce the LCC to one."""
     graph = gt.Graph(directed=False)

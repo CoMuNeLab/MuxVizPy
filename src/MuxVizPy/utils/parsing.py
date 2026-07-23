@@ -1073,35 +1073,64 @@ def create_supra_transition_matrix_virus(
     layers : int
         Number of layers.
     p_intra : float, optional
-        Weight for intra-layer contributions (default=1).
+        Nonnegative relative weight for intra-layer transitions. Inter-layer
+        transitions have weight 1 (default=1).
 
     Returns
     -------
     scipy.sparse matrix
         Row-normalized supra transition matrix.
     """
-    supra_sum = np.array(supra.sum(axis=0).tolist()[0])
+    if nodes < 0 or layers < 0:
+        raise ValueError("nodes and layers must be nonnegative")
+    if not np.isfinite(p_intra) or p_intra < 0.0:
+        raise ValueError("p_intra must be a nonnegative finite value")
+    if len(node_tensor) != layers:
+        raise ValueError(
+            f"node_tensor contains {len(node_tensor)} layers; expected {layers}"
+        )
 
-    blocks = []
-    for l in range(layers):
-        block = sp.identity(nodes).multiply(supra_sum[l * nodes:(l + 1) * nodes] - (layers - 1))
-        blocks.append(block)
+    order = nodes * layers
+    supra = supra.tocsr(copy=True)
+    if supra.shape != (order, order):
+        raise ValueError(
+            f"Incompatible supra shape {supra.shape}; expected {(order, order)}"
+        )
 
-    mat = []
-    for la in range(layers):
-        norm_fac = np.sum(supra_sum.reshape(layers, nodes)[np.delete(np.arange(layers), la)] - (layers - 1), axis=0)
-        norm_fac = np.where(norm_fac != 0, 1 / norm_fac, 0)
-        mat.append([blocks[i].multiply(norm_fac) for i in np.delete(np.arange(layers), la)])
+    intra_layers = []
+    for layer, matrix in enumerate(node_tensor):
+        matrix = matrix.tocsr(copy=False)
+        if matrix.shape != (nodes, nodes):
+            raise ValueError(
+                f"Layer {layer} has shape {matrix.shape}; "
+                f"expected {(nodes, nodes)}"
+            )
+        intra_layers.append(matrix)
 
-    diag_blocks = []
-    for la in range(layers):
-        t0_sum = np.array(list(node_tensor[la].sum(axis=0)))[0][0]
-        t0_sum = np.where(t0_sum != 0, 1 / t0_sum, 0)
-        diag_blocks.append(node_tensor[la].dot(sp.diags(t0_sum)).T)
+    if np.any(supra.data < 0.0) or any(
+        np.any(matrix.data < 0.0) for matrix in intra_layers
+    ):
+        raise ValueError("transition matrices require nonnegative edge weights")
+    if order == 0:
+        return sp.csr_matrix((0, 0), dtype=np.float64)
 
-    for i in range(layers):
-        mat[i].insert(i, diag_blocks[i].multiply(np.array([p_intra] * nodes)))
+    intra = sp.block_diag(intra_layers, format="csr")
+    inter = supra.tolil(copy=True)
+    for layer in range(layers):
+        start = layer * nodes
+        stop = start + nodes
+        inter[start:stop, start:stop] = 0.0
+    inter = inter.tocsr()
+    inter.eliminate_zeros()
 
-    comb_mat = sp.vstack([sp.hstack(mat[i]) for i in range(layers)])
-    valss = np.where(comb_mat.sum(axis=1) != 0, 1 / comb_mat.sum(axis=1), 0).flatten()
-    return comb_mat.T.multiply(valss).T
+    def row_normalize(matrix: sp.spmatrix) -> sp.csr_matrix:
+        matrix = matrix.tocsr(copy=False)
+        row_sums = np.asarray(matrix.sum(axis=1)).ravel()
+        inverse = np.zeros_like(row_sums, dtype=np.float64)
+        nonzero = row_sums > 0.0
+        inverse[nonzero] = 1.0 / row_sums[nonzero]
+        return (sp.diags(inverse, format="csr") @ matrix).tocsr()
+
+    combined = row_normalize(intra).multiply(p_intra)
+    combined = combined + row_normalize(inter)
+    return row_normalize(combined)

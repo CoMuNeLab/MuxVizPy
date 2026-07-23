@@ -146,6 +146,57 @@ class TestParsingCorrectness:
 class TestTransitionMatrix:
     """Properties of the classical and PageRank transition matrices."""
 
+    def test_virus_transition_preserves_actual_edges(self):
+        layer0 = sp.csr_matrix([[0, 1], [0, 0]], dtype=float)
+        layer1 = sp.csr_matrix([[0, 0], [1, 0]], dtype=float)
+        supra = sp.block_diag([layer0, layer1], format="lil")
+        supra[0, 2] = 1.0
+        supra[2, 0] = 1.0
+        supra = supra.tocsr()
+
+        transition = parsing.create_supra_transition_matrix_virus(
+            supra,
+            [layer0, layer1],
+            nodes=2,
+            layers=2,
+            p_intra=3.0,
+        ).tocsr()
+
+        np.testing.assert_array_equal(
+            transition.toarray() != 0.0,
+            supra.toarray() != 0.0,
+        )
+        np.testing.assert_allclose(
+            np.asarray(transition.sum(axis=1)).ravel(),
+            [1.0, 0.0, 1.0, 1.0],
+        )
+        assert transition[0, 1] == pytest.approx(0.75)
+        assert transition[0, 2] == pytest.approx(0.25)
+
+    def test_empty_network_has_empty_virus_transition(self):
+        supra = sp.csr_matrix((3, 3), dtype=float)
+        layers = [sp.csr_matrix((1, 1), dtype=float) for _ in range(3)]
+
+        transition = parsing.create_supra_transition_matrix_virus(
+            supra, layers, nodes=1, layers=3
+        ).tocsr()
+
+        assert transition.shape == supra.shape
+        assert transition.nnz == 0
+
+    @pytest.mark.parametrize("p_intra", [-1.0, np.inf, np.nan])
+    def test_virus_transition_rejects_invalid_intralayer_weight(
+        self, p_intra
+    ):
+        with pytest.raises(ValueError, match="p_intra"):
+            parsing.create_supra_transition_matrix_virus(
+                sp.csr_matrix((1, 1)),
+                [sp.csr_matrix((1, 1))],
+                nodes=1,
+                layers=1,
+                p_intra=p_intra,
+            )
+
     def test_classical_row_stochastic(self, sample_adjacency, n_nodes, n_layers):
         T = parsing.build_transition_matrix_from_adjacency_matrix(
             sample_adjacency, n_nodes, n_layers, kind="classical"

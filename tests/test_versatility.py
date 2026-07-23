@@ -269,6 +269,79 @@ class TestKatzCentralityAgreement:
 class TestCentralityEdgeCases:
     """Centrality behavior for tiny, empty, reducible, and acyclic networks."""
 
+    def test_legacy_random_walk_honors_cval_and_normalizes_after_aggregation(
+        self,
+    ):
+        layers = [
+            sp.csr_matrix(
+                [[0, 1, 0], [1, 0, 1], [0, 1, 0]], dtype=float
+            ),
+            sp.csr_matrix(
+                [[0, 1, 1], [1, 0, 0], [1, 0, 0]], dtype=float
+            ),
+        ]
+
+        np.random.seed(123)
+        low = versatility.get_multi_RW_centrality_edge_colored(
+            layers, cval=0.0
+        )
+        np.random.seed(123)
+        high = versatility.get_multi_RW_centrality_edge_colored(
+            layers, cval=0.9
+        )
+
+        assert not low.equals(high)
+        assert low["vers"].max() == pytest.approx(1.0)
+        assert high["vers"].max() == pytest.approx(1.0)
+
+    @pytest.mark.parametrize("alpha", [0.0, -0.1, 1.1, np.inf, np.nan])
+    def test_pagerank_rejects_invalid_alpha(self, alpha):
+        adjacency = sp.csr_matrix(
+            [[0, 1, 0], [0, 0, 1], [0, 0, 1]], dtype=float
+        )
+
+        with pytest.raises(ValueError, match="alpha"):
+            versatility.compute_multi_rw_centrality(
+                adjacency, n=3, l=1, kind="pagerank", alpha=alpha
+            )
+
+    @pytest.mark.parametrize(
+        ("parameter", "value"),
+        [("tol", 0.0), ("tol", np.nan), ("max_iter", 0)],
+    )
+    def test_pagerank_rejects_invalid_iteration_parameters(
+        self, parameter, value
+    ):
+        adjacency = sp.eye(3, format="csr")
+        kwargs = {parameter: value}
+
+        with pytest.raises(ValueError, match=parameter):
+            versatility.compute_multi_rw_centrality(
+                adjacency, n=3, l=1, kind="pagerank", **kwargs
+            )
+
+    def test_pagerank_raises_when_iteration_does_not_converge(self):
+        adjacency = sp.csr_matrix(
+            [[0, 1, 0], [0, 0, 1], [0, 0, 1]], dtype=float
+        )
+
+        with pytest.raises(RuntimeError, match="converge"):
+            versatility.compute_multi_rw_centrality(
+                adjacency,
+                n=3,
+                l=1,
+                kind="pagerank",
+                tol=1e-16,
+                max_iter=1,
+            )
+
+    def test_pagerank_empty_network_returns_empty_result(self):
+        result = versatility.compute_multi_rw_centrality(
+            sp.csr_matrix((0, 0)), n=0, l=1, kind="pagerank"
+        )
+
+        assert result.shape == (0,)
+
     def test_eigenvector_is_deterministic_on_bipartite_network(self):
         adjacency = sp.diags(
             [np.ones(3), np.ones(3)],

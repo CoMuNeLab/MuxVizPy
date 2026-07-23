@@ -619,9 +619,22 @@ def compute_multi_rw_centrality(
         return rc
 
     elif kind == "pagerank":
+        if not np.isfinite(alpha) or not 0.0 < alpha <= 1.0:
+            raise ValueError("alpha must be finite and in (0, 1] for pagerank")
+        if not np.isfinite(tol) or tol <= 0.0:
+            raise ValueError("tol must be a positive finite value")
+        if (
+            isinstance(max_iter, bool)
+            or not isinstance(max_iter, (int, np.integer))
+            or max_iter < 1
+        ):
+            raise ValueError("max_iter must be a positive integer")
+
         P = parsing_utils.build_transition_matrix_from_adjacency_matrix(
             adj, n, l, kind="classical", logger=logger,
         ).tocsr()
+        if NL == 0:
+            return np.empty(0, dtype=np.float32)
 
         row_sums = np.asarray(P.sum(axis=1)).ravel()
         dangling_mask = row_sums == 0.0
@@ -646,6 +659,11 @@ def compute_multi_rw_centrality(
             x = x_next
             if err < tol:
                 break
+        else:
+            raise RuntimeError(
+                f"PageRank did not converge within {max_iter} iterations "
+                f"(error={err:.3e})"
+            )
 
         if logger and logger.isEnabledFor(logging.DEBUG):
             logger.debug("PageRank converged in %d iterations with error %.3e", it + 1, err)
@@ -933,11 +951,24 @@ def get_multi_RW_centrality_edge_colored(node_tensor: list[sps.spmatrix], cval: 
     supra_transition = supra_transition[nonzero_idx]
     supra_transition = supra_transition[:,nonzero_idx]
     #compute the leading eigenvector with the approximation methos
-    eig,pr_v = approx_utils.leading_eigenv_approx(supra_transition.T, max_iter=10000, tol=1e-8, cval=0.15)
+    eig,pr_v = approx_utils.leading_eigenv_approx(
+        supra_transition.T,
+        max_iter=10000,
+        tol=1e-8,
+        cval=cval,
+    )
     #aggregate by summing together probabilities corresponding to the same physical node to have the final result
-    res_df = pd.DataFrame({"phy nodes": nonzero_idx-((nonzero_idx//nodes)*nodes), "vers": pr_v/max(pr_v)})
-
-    return res_df.groupby("phy nodes").aggregate(sum).reset_index()
+    res_df = pd.DataFrame(
+        {
+            "phy nodes": nonzero_idx - ((nonzero_idx // nodes) * nodes),
+            "vers": pr_v,
+        }
+    )
+    result = res_df.groupby("phy nodes").aggregate(sum).reset_index()
+    max_value = result["vers"].max()
+    if max_value > 0:
+        result["vers"] /= max_value
+    return result
 
 def get_multi_Kcore_centrality(supra: sps.spmatrix, layers: int, nodes: int):
     """

@@ -187,7 +187,6 @@ def test_explicit_sparse_zero_does_not_become_binary_adjacency():
     assert adjacency.nnz == 0
 
 
-@known_bug("A11")
 def test_legacy_random_walk_honors_cval_and_normalizes_scores():
     """The public perturbation parameter must affect a max-normalized result."""
     layers = [
@@ -459,7 +458,6 @@ def test_interlayer_tensor_builder_uses_optional_torch_guard(monkeypatch):
         )
 
 
-@known_bug("A28")
 def test_empty_network_produces_empty_virus_transition_matrix():
     """Transition construction must not invent edges absent from the supra matrix."""
     supra = sp.csr_matrix((3, 3), dtype=float)
@@ -493,7 +491,6 @@ def test_disconnected_path_statistics_use_infinite_distances_and_zero_closeness(
     np.testing.assert_allclose(closeness, [0.5, 0.0, 0.5], atol=1e-12)
 
 
-@known_bug("A30")
 def test_pagerank_rejects_an_invalid_damping_factor():
     """PageRank alpha outside (0, 1] must fail before iteration."""
     adjacency = sp.csr_matrix(

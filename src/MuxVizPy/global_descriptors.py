@@ -37,7 +37,8 @@ def compute_average_global_clustering_coefficient(adj: sp.csr_matrix, n:int, l: 
     AJA_trace = float((adj.sum(axis=0).dot(adj.sum(axis=1))).diagonal().sum()) # this is the same as 1^T (A^T A) 1
     AIA_trace = float((adj.dot(adj)).diagonal().sum()) # this is the same as sum of squares of all elements in A
     denom = AJA_trace - AIA_trace
-    denom = denom * adj.data.max()
+    max_weight = float(adj.data.max()) if adj.data.size else 0.0
+    denom = denom * max_weight
 
     if logger and logger.isEnabledFor(logging.DEBUG):
         logger.debug(f"Numerator (tr(A^2 A)): {num}")
@@ -101,17 +102,14 @@ def compute_average_global_overlap(
             A = (A > 0).astype(float)
         layers.append(A)
 
-    # Running element-wise minimum: nonzero only where ALL layers share the edge
-    O = _sparse_pmin(layers[0], layers[1])
-    norm_total = float(layers[0].sum())
+    # Running element-wise minimum: nonzero only where all layers share the edge.
+    overlap = layers[0]
+    for layer in layers[1:]:
+        overlap = _sparse_pmin(overlap, layer)
+    norm_total = sum(float(layer.sum()) for layer in layers)
 
-    if l > 2:
-        for alpha in range(1, l):          # mirrors R: for (l in 2:Layers)
-            O = _sparse_pmin(O, layers[alpha])
-            norm_total += float(layers[alpha].sum())
-
-    sum_O = float(O.sum())
-    avg = l * sum_O / norm_total if norm_total != 0 else 0.0
+    sum_overlap = float(overlap.sum())
+    avg = l * sum_overlap / norm_total if norm_total != 0 else 0.0
 
     # R checks `sum(A - A^T) == 0` before halving.  However sum(A) == sum(A^T)
     # for any matrix (transposing preserves the total), so R's condition is
@@ -119,7 +117,7 @@ def compute_average_global_overlap(
     avg /= 2
 
     if logger and logger.isEnabledFor(logging.DEBUG):
-        logger.debug(f"sum(O): {sum_O}, NormTotal: {norm_total}, L: {l}")
+        logger.debug(f"sum(O): {sum_overlap}, NormTotal: {norm_total}, L: {l}")
 
     return avg
 

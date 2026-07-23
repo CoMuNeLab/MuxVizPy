@@ -44,7 +44,6 @@ def known_bug(issue: str):
     return pytest.mark.xfail(reason=f"{issue}: reproduced open defect", strict=True)
 
 
-@known_bug("A1")
 def test_two_layer_global_overlap_uses_both_layers_in_denominator():
     """The two-layer formula must include both layer strengths."""
     layer0 = sp.csr_matrix(
@@ -213,7 +212,6 @@ def test_legacy_random_walk_honors_cval_and_normalizes_scores():
     assert float(high["vers"].max()) <= 1.0
 
 
-@known_bug("A12")
 def test_empty_adjacency_has_zero_average_global_clustering():
     """An edgeless graph has a defined global clustering coefficient of zero."""
     result = (

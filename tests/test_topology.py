@@ -10,17 +10,17 @@ Classes:
     TestTopologyReference    — comparison against pre-computed muxViz R results
 """
 
-import pytest
-import numpy as np
-import scipy.sparse as sp
 import graph_tool as gt
-from MuxVizPy import topology
-from MuxVizPy.utils.parsing import (
-    supra_adjacency_to_network_list,
-    build_edge_colored_matrices_from_supra_adjacency_matrix,
-)
+import numpy as np
+import pytest
+import scipy.sparse as sp
 from conftest import compare_metrics
 
+from MuxVizPy import topology
+from MuxVizPy.utils.parsing import (
+    build_edge_colored_matrices_from_supra_adjacency_matrix,
+    supra_adjacency_to_network_list,
+)
 
 # ---------------------------------------------------------------------------
 # Local fixture
@@ -197,6 +197,46 @@ class TestTopologyCorrectness:
             pytest.skip("path statistics too slow for random_large")
         result = topology.get_multi_path_statistics(net_adjacency, net_l, net_n)
         assert np.all(np.array(result["closeness"]) >= 0)
+
+    def test_path_stats_disconnected_pairs_are_infinite(self):
+        adjacency = sp.csr_matrix(
+            [[0, 0, 1], [0, 0, 0], [1, 0, 0]], dtype=float
+        )
+
+        result = topology.get_multi_path_statistics(
+            adjacency, layers=1, nodes=3
+        )
+
+        expected_distances = np.array(
+            [[0.0, np.inf, 1.0], [np.inf, 0.0, np.inf], [1.0, np.inf, 0.0]]
+        )
+        np.testing.assert_array_equal(
+            result["distance_matrix"], expected_distances
+        )
+        np.testing.assert_allclose(result["closeness"], [0.5, 0.0, 0.5])
+        assert result["avg_path_length"] == pytest.approx(3.0)
+
+    def test_path_stats_multilayer_trailing_isolate_has_zero_closeness(self):
+        supra = sp.csr_matrix(
+            (np.ones(2), ([0, 2], [2, 0])), shape=(6, 6)
+        )
+
+        result = topology.get_multi_path_statistics(
+            supra, layers=2, nodes=3
+        )
+
+        assert np.isinf(result["distance_matrix"][0, 1])
+        assert np.isinf(result["distance_matrix"][1, 2])
+        np.testing.assert_allclose(result["closeness"], [0.5, 0.0, 0.5])
+
+    def test_path_stats_edgeless_network_has_zero_closeness(self):
+        result = topology.get_multi_path_statistics(
+            sp.csr_matrix((3, 3)), layers=1, nodes=3
+        )
+
+        np.testing.assert_allclose(result["closeness"], np.zeros(3))
+        assert np.isinf(result["avg_path_length"])
+        assert np.all(np.isinf(result["distance_matrix"][~np.eye(3, dtype=bool)]))
 
     # --- get_SP_similarity_matrix --------------------------------------------
 

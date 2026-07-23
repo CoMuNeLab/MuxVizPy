@@ -473,7 +473,6 @@ def test_empty_network_produces_empty_virus_transition_matrix():
     assert transition.nnz == 0
 
 
-@known_bug("A29")
 def test_disconnected_path_statistics_use_infinite_distances_and_zero_closeness():
     """Unreachable pairs must not contribute a small finite reciprocal distance."""
     adjacency = sp.csr_matrix(

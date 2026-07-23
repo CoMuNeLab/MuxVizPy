@@ -213,11 +213,14 @@ def get_multi_path_statistics(supra: sps.spmatrix, layers: int, nodes: int) -> d
         Dictionary with the following keys:
 
         - ``"distance_matrix"``: numpy.ndarray of shape ``(nodes, nodes)`` —
-          pairwise minimum-path distances between physical nodes.
+          pairwise minimum-path distances between physical nodes. Unreachable
+          pairs are represented by infinity.
         - ``"avg_path_length"``: float — average path length defined as
-          ``1 / mean(closeness)``.
+          ``1 / mean(closeness)``. It is infinite when every closeness value
+          is zero.
         - ``"closeness"``: list of float — closeness centrality for each
-          physical node (Opsahl et al., 2010).
+          physical node (Opsahl et al., 2010). Unreachable nodes contribute
+          zero to the reciprocal-distance mean.
     """
     expected_shape = (layers * nodes, layers * nodes)
     if supra.shape != expected_shape:
@@ -255,7 +258,23 @@ def get_multi_path_statistics(supra: sps.spmatrix, layers: int, nodes: int) -> d
     #Opsahl, T., Agneessens, F., Skvoretz, J. (2010). Node centrality in weighted networks: Generalizing degree and shortest paths. Social Networks 32, 245-251
     #https://toreopsahl.com/2010/03/20/closeness-centrality-in-networks-with-disconnected-components/
 
-    closeness = [np.mean(1/np.delete(DMIN[n,:],n)) for n in range(nodes)]
+    DMIN = np.asarray(DMIN, dtype=np.float64)
+    DMIN[DMIN >= np.iinfo(np.int32).max] = np.inf
+
+    reciprocal_distances = np.zeros_like(DMIN)
+    reachable = np.isfinite(DMIN) & (DMIN > 0.0)
+    np.divide(
+        1.0,
+        DMIN,
+        out=reciprocal_distances,
+        where=reachable,
+    )
+    if nodes > 1:
+        closeness = (
+            reciprocal_distances.sum(axis=1) / (nodes - 1)
+        ).tolist()
+    else:
+        closeness = np.zeros(nodes, dtype=np.float64).tolist()
     #0 if disconnected, 1 if connected to all other nodes
 
     ###############
@@ -263,7 +282,10 @@ def get_multi_path_statistics(supra: sps.spmatrix, layers: int, nodes: int) -> d
     ###############
     #this is a personal definition, should be checked.
     #of course, for networks with isolated nodes mean(1/closeness) = Inf, instead the following is safe:
-    avg_path_length = 1 / np.mean(closeness)
+    mean_closeness = float(np.mean(closeness)) if closeness else 0.0
+    avg_path_length = (
+        1.0 / mean_closeness if mean_closeness > 0.0 else np.inf
+    )
 
     ###############
     #betweenness

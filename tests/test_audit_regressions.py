@@ -235,7 +235,6 @@ def test_unknown_degree_backend_is_rejected():
         )
 
 
-@known_bug("A14")
 def test_sparse_cp_rejects_non_four_dimensional_tensor_cleanly():
     """The four-dimensional public contract must fail with ValueError at entry."""
     tensor = torch.sparse_coo_tensor(
@@ -554,7 +553,6 @@ def test_bgs_density_rejects_directed_adjacency():
         parsing.build_density_bgs_from_adjacency_matrix(directed)
 
 
-@known_bug("A34")
 def test_cp_reconstruction_error_includes_implicit_zero_coordinates():
     """False-positive reconstruction mass on sparse zeros contributes to error."""
     mode_indices = [np.array([0], dtype=int) for _ in range(4)]

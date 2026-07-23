@@ -319,25 +319,46 @@ class TestDecompositionHelpers:
             _initialize_factors((4, 2, 4, 2), 3, "invalid", None, backend)
 
     def test_compute_recon_error_perfect(self, backend):
-        """When factors perfectly reconstruct the tensor, error should be ~0."""
-        rank = 2
-        # Build factors and construct tensor values from them
-        rng = np.random.default_rng(7)
-        A = rng.standard_normal((4, rank))
-        B = rng.standard_normal((2, rank))
-        C = rng.standard_normal((4, rank))
-        D = rng.standard_normal((2, rank))
-        weights = np.array([1.5, 0.8])
-
-        # Pick some coordinates
-        coords = np.array([[0, 1, 2, 3], [0, 1, 0, 1], [1, 2, 3, 0], [1, 0, 1, 0]])
-        # Compute exact values at those coordinates
-        factors = [A, B, C, D]
-        values = _reconstruct_at_nonzeros(factors, weights, coords)
+        """A one-coordinate CP model exactly reconstructs a sparse tensor."""
+        factors = [
+            np.array([[1.0], [0.0]]),
+            np.array([[1.0], [0.0]]),
+            np.array([[1.0], [0.0]]),
+            np.array([[1.0], [0.0]]),
+        ]
+        weights = np.array([2.0])
+        coords = np.zeros((4, 1), dtype=int)
+        values = np.array([2.0])
         mode_indices = [coords[m] for m in range(4)]
 
         error = _compute_recon_error(mode_indices, values, factors, weights, backend)
         assert error == pytest.approx(0.0, abs=1e-10)
+
+    def test_compute_recon_error_matches_dense_reference(self, backend):
+        rng = np.random.default_rng(7)
+        shape = (2, 2, 2, 2)
+        rank = 2
+        factors = [rng.standard_normal((dim, rank)) for dim in shape]
+        weights = np.array([1.5, 0.8])
+        coords = np.array([[0, 1], [0, 1], [1, 0], [1, 0]])
+        values = np.array([2.0, -1.0])
+        mode_indices = [coords[mode] for mode in range(4)]
+
+        dense_tensor = np.zeros(shape)
+        dense_tensor[tuple(coords)] = values
+        reconstruction = np.einsum(
+            "ir,jr,kr,lr,r->ijkl",
+            *factors,
+            weights,
+        )
+        expected = np.linalg.norm(dense_tensor - reconstruction)
+        expected /= np.linalg.norm(dense_tensor)
+
+        error = _compute_recon_error(
+            mode_indices, values, factors, weights, backend
+        )
+
+        assert error == pytest.approx(expected)
 
     def test_compute_recon_error_nonzero(self, backend):
         """Random factors should give nonzero reconstruction error on random data."""
@@ -433,6 +454,51 @@ class TestSparseCPCorrectness:
         assert C.shape == (N, rank)
         assert D.shape == (L, rank)
         assert weights.shape == (rank,)
+
+    def test_rejects_non_multiplex_tensor_shape(self):
+        tensor = torch.sparse_coo_tensor(
+            torch.tensor([[0], [0], [0]], dtype=torch.long),
+            torch.tensor([1.0]),
+            size=(2, 2, 2),
+            check_invariants=True,
+        )
+
+        with pytest.raises(ValueError, match="N, L, N, L|four|4"):
+            sparse_cp_decomposition(
+                tensor,
+                rank=1,
+                max_iter=1,
+                backend="numpy",
+                random_state=0,
+            )
+
+    def test_rejects_mismatched_multiplex_dimensions(self):
+        tensor = torch.sparse_coo_tensor(
+            torch.tensor([[0], [0], [0], [0]], dtype=torch.long),
+            torch.tensor([1.0]),
+            size=(2, 2, 3, 2),
+            check_invariants=True,
+        )
+
+        with pytest.raises(ValueError, match="N, L, N, L"):
+            sparse_cp_decomposition(
+                tensor,
+                rank=1,
+                max_iter=1,
+                backend="numpy",
+                random_state=0,
+            )
+
+    @pytest.mark.parametrize("rank", [0, -1])
+    def test_rejects_nonpositive_rank(self, small_tensor, rank):
+        with pytest.raises(ValueError, match="rank"):
+            sparse_cp_decomposition(
+                small_tensor,
+                rank=rank,
+                max_iter=1,
+                backend="numpy",
+                random_state=0,
+            )
 
     def test_convergence_history(self, small_tensor):
         _, _, history = sparse_cp_decomposition(

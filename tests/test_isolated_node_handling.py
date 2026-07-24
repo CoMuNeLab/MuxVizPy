@@ -113,6 +113,31 @@ def test_kcore_deduplicates_symmetric_undirected_edges():
     np.testing.assert_array_equal(result, [1.0, 1.0])
 
 
+def test_sp_similarity_retains_layer_isolated_nodes():
+    layer_zero = sp.csr_matrix(
+        [[0, 1, 1], [1, 0, 1], [1, 1, 0]],
+        dtype=float,
+    )
+    layer_one = sp.csr_matrix(
+        [[0, 1, 0], [1, 0, 0], [0, 0, 0]],
+        dtype=float,
+    )
+    supra = sp.block_diag([layer_zero, layer_one], format="csr")
+
+    result = topology.get_SP_similarity_matrix(
+        supra,
+        layers=2,
+        nodes=3,
+    )
+
+    # Without the trailing isolated node the per-layer distance matrices differ in
+    # shape and the subtraction fails to broadcast.
+    assert result.shape == (2, 2)
+    np.testing.assert_array_equal(np.diag(result), [1.0, 1.0])
+    np.testing.assert_allclose(result, result.T)
+    assert np.isfinite(result).all()
+
+
 def test_path_statistics_retain_trailing_isolated_replicas():
     supra = sp.csr_matrix(
         (np.ones(2), ([0, 1], [1, 0])),

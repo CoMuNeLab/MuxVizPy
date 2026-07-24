@@ -40,7 +40,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ### 3. Install the package
 
 ```bash
-git clone https://github.com/your-username/MuxVizPy.git
+git clone https://github.com/CoMuNeLab/MuxVizPy.git
 cd MuxVizPy
 
 # Core install
@@ -66,7 +66,19 @@ uv pip install -e ".[torch]"
 
 ## Basic Usage
 
-For a basic usage script see the file `scripts/test.py`.
+Run the small example in [`scripts/test.py`](scripts/test.py) to build a
+two-layer network and compute its aggregated node degrees:
+
+```bash
+python scripts/test.py
+```
+
+Expected output:
+
+```
+nodes=3, layers=2
+aggregated degree=[0.0, 1.0, 2.0]
+```
 
 ---
 

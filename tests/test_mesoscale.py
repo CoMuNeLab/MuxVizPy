@@ -53,30 +53,30 @@ class TestLocalClusteringCorrectness:
     """compute_local_clustering_coefficient returns sane types/shapes/values."""
 
     def test_returns_ndarray(self, net_adjacency, net_n, net_l):
-        result = mesoscale.compute_local_clustering_coefficient(net_adjacency, net_n, net_l)
+        result = mesoscale.compute_local_clustering_coefficient(net_adjacency, nodes=net_n, layers=net_l)
         assert isinstance(result, np.ndarray)
 
     def test_shape(self, net_adjacency, net_n, net_l):
-        result = mesoscale.compute_local_clustering_coefficient(net_adjacency, net_n, net_l)
+        result = mesoscale.compute_local_clustering_coefficient(net_adjacency, nodes=net_n, layers=net_l)
         assert result.shape == (net_n,)
 
     def test_range_non_negative(self, net_adjacency, net_n, net_l):
-        result = mesoscale.compute_local_clustering_coefficient(net_adjacency, net_n, net_l)
+        result = mesoscale.compute_local_clustering_coefficient(net_adjacency, nodes=net_n, layers=net_l)
         assert np.all(result >= 0.0), f"Negative values found: {result[result < 0]}"
 
     def test_range_at_most_one(self, net_adjacency, net_n, net_l):
-        result = mesoscale.compute_local_clustering_coefficient(net_adjacency, net_n, net_l)
+        result = mesoscale.compute_local_clustering_coefficient(net_adjacency, nodes=net_n, layers=net_l)
         assert np.all(result <= 1.0), f"Values > 1 found: {result[result > 1]}"
 
     def test_zero_adjacency_gives_zero_clustering(self):
         n, l = 5, 3
         zero_adj = sp.csr_matrix((n * l, n * l))
-        result = mesoscale.compute_local_clustering_coefficient(zero_adj, n, l)
+        result = mesoscale.compute_local_clustering_coefficient(zero_adj, nodes=n, layers=l)
         assert np.allclose(result, 0.0)
 
     def test_sample_network(self, sample_adjacency, n_nodes, n_layers):
         result = mesoscale.compute_local_clustering_coefficient(
-            sample_adjacency, n_nodes, n_layers
+            sample_adjacency, nodes=n_nodes, layers=n_layers
         )
         assert result.shape == (n_nodes,)
         assert np.all(result >= 0.0)
@@ -98,7 +98,7 @@ class TestLocalClusteringReference:
         if "local_clus" not in net_muxviz_results:
             pytest.skip(f"'local_clus' not in reference results for '{network_config}'")
 
-        computed = mesoscale.compute_local_clustering_coefficient(net_adjacency, net_n, net_l)
+        computed = mesoscale.compute_local_clustering_coefficient(net_adjacency, nodes=net_n, layers=net_l)
         expected = np.asarray(net_muxviz_results["local_clus"], dtype=np.float64).ravel()
 
         compare_metrics(

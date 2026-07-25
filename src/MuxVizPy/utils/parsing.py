@@ -820,10 +820,9 @@ def build_tensor_from_supra_adjacency_matrix(a, *, nodes, layers):
 
 def build_transition_matrix_from_adjacency_matrix(
         adj: sp.csr_matrix,
-        n: int,
-        l: int,
+        *, nodes: int,
+        layers: int,
         kind: str,
-        *,
         alpha: float | None = None,
         logger: logging.Logger | None = None,
 ) -> sp.csr_matrix:
@@ -838,11 +837,11 @@ def build_transition_matrix_from_adjacency_matrix(
     Notes:
         - Teleportation term makes the matrix dense; returned as CSR for consistency.
     """
-    NL = n * l
+    NL = nodes * layers
     if not sp.isspmatrix_csr(adj):
         adj = adj.tocsr(copy=False)
     if adj.shape != (NL, NL):
-        raise ValueError(f"Incompatible shape {adj.shape} for n={n}, l={l} (expected {(NL, NL)})")
+        raise ValueError(f"Incompatible shape {adj.shape} for n={nodes}, l={layers} (expected {(NL, NL)})")
 
     kind = kind.lower().strip()
 
@@ -982,7 +981,7 @@ def get_aggregate_network(
 
 
 def supra_adjacency_to_block_tensor(
-    supra: sp.spmatrix, layers: int, nodes: int
+    supra: sp.spmatrix, *, nodes: int, layers: int
 ) -> list[list[sp.spmatrix]]:
     """
     Convert supra-adjacency matrix to block tensor format.
@@ -991,10 +990,10 @@ def supra_adjacency_to_block_tensor(
     ----------
     supra : scipy.sparse matrix
         Supra-adjacency matrix.
-    layers : int
-        Number of layers.
     nodes : int
         Number of nodes.
+    layers : int
+        Number of layers.
 
     Returns
     -------
@@ -1009,7 +1008,7 @@ def supra_adjacency_to_block_tensor(
 
 
 def node_tensor_to_network_list(
-    tensor: list[sp.spmatrix], layers: int, nodes: int
+    tensor: list[sp.spmatrix], *, nodes: int, layers: int
 ) -> list[gt.Graph]:
     """
     Convert node-layer adjacency matrices into graph_tool graphs.
@@ -1018,10 +1017,10 @@ def node_tensor_to_network_list(
     ----------
     tensor : list of scipy.sparse matrices
         List of per-layer adjacency matrices.
-    layers : int
-        Number of layers.
     nodes : int
         Number of nodes.
+    layers : int
+        Number of layers.
 
     Returns
     -------
@@ -1078,6 +1077,7 @@ def build_supra_adjacency_matrix_from_extended_edgelist(
 def create_supra_transition_matrix_virus(
     supra: sp.spmatrix,
     node_tensor: list[sp.spmatrix],
+    *,
     nodes: int,
     layers: int,
     p_intra: float = 1,

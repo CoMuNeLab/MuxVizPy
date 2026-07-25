@@ -95,8 +95,8 @@ def inter_layer_assortativity(
 
 def compute_local_clustering_coefficient(
     adj: sp.sparse.spmatrix,
-    n: int,
-    l: int,
+    *, nodes: int,
+    layers: int,
     logger: logging.Logger | None = None,
 ) -> np.ndarray:
     """
@@ -110,17 +110,17 @@ def compute_local_clustering_coefficient(
     ----------
     adj : scipy.sparse matrix, shape (N·L, N·L)
         Binary supra-adjacency matrix with supra-node indexing
-        ``row = layer * n + node``.
-    n : int
+        ``row = layer * nodes + node``.
+    nodes : int
         Number of physical nodes.
-    l : int
+    layers : int
         Number of layers.
     logger : optional
         Unused; kept for API consistency with other descriptor functions.
 
     Returns
     -------
-    numpy.ndarray, shape (n,)
+    numpy.ndarray, shape (nodes,)
         Local clustering coefficient in ``[0, 1]`` for each physical node.
         Nodes with no possible triangles (isolated or degree-1 nodes) are
         assigned 0.
@@ -131,13 +131,13 @@ def compute_local_clustering_coefficient(
     networks. *Physical Review X*, 3(4), 041022.
     https://doi.org/10.1103/PhysRevX.3.041022
     """
-    NL = n * l
+    NL = nodes * layers
     A = adj.astype(float)
 
-    # Fold matrix P of shape (NL x n): P[i*n+p, p] = 1 for all layers i.
-    # P.T @ M @ P sums all (l x l) blocks of M into a single (n x n) matrix.
+    # Fold matrix P of shape (NL x nodes): P[i*nodes+p, p] = 1 for all layers i.
+    # P.T @ M @ P sums all (layers x layers) blocks of M into a single (nodes x nodes) matrix.
     idx = np.arange(NL)
-    P = csr_matrix((np.ones(NL), (idx, idx % n)), shape=(NL, n))
+    P = csr_matrix((np.ones(NL), (idx, idx % nodes)), shape=(NL, nodes))
 
     A2 = A @ A
     A3 = A2 @ A

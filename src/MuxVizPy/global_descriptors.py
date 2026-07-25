@@ -4,7 +4,7 @@ import numpy as np
 import scipy.sparse as sp
 
 
-def compute_average_global_clustering_coefficient(adj: sp.csr_matrix, n:int, l: int, logger: logging.Logger | None = None) -> float:
+def compute_average_global_clustering_coefficient(adj: sp.csr_matrix, *, nodes:int, layers: int, logger: logging.Logger | None = None) -> float:
     """
     Compute the average global clustering coefficient for a multilayer network.
     This implementation matches the R version from the reference, using the formula:
@@ -12,9 +12,9 @@ def compute_average_global_clustering_coefficient(adj: sp.csr_matrix, n:int, l: 
 
     Where F is the matrix with 1s everywhere except the diagonal.
     Args:
-        adj: scipy.sparse.csr_matrix - the adjacency matrix of the multilayer network (shape: (n*l, n*l))
-        n: int - number of nodes per layer
-        l: int - number of layers
+        adj: scipy.sparse.csr_matrix - the adjacency matrix of the multilayer network (shape: (nodes*layers, nodes*layers))
+        nodes: int - number of nodes per layer
+        layers: int - number of layers
         logger: Optional[logging.Logger] - logger for debugging (default: None)
 
     Returns:
@@ -61,8 +61,8 @@ def _sparse_pmin(A: sp.csr_matrix, B: sp.csr_matrix) -> sp.csr_matrix:
 
 def compute_average_global_overlap(
     adj: sp.csr_matrix,
-    n: int,
-    l: int,
+    *, nodes: int,
+    layers: int,
     weighted: bool = False,
     logger: logging.Logger | None = None,
 ) -> float:
@@ -79,9 +79,9 @@ def compute_average_global_overlap(
     For undirected networks (symmetric supra-adjacency) the result is halved.
 
     Args:
-        adj: scipy.sparse.csr_matrix - supra-adjacency matrix (n*l, n*l)
-        n: int - number of nodes per layer
-        l: int - number of layers
+        adj: scipy.sparse.csr_matrix - supra-adjacency matrix (nodes*layers, nodes*layers)
+        nodes: int - number of nodes per layer
+        layers: int - number of layers
         weighted: bool - if True use actual edge weights; if False binarize first (default: False)
         logger: Optional[logging.Logger] - logger for debugging (default: None)
 
@@ -92,24 +92,24 @@ def compute_average_global_overlap(
         De Domenico et al. (2015) "Structural reducibility of multilayer networks",
         Nature Communications, 6, 6864.
     """
-    if l < 2:
+    if layers < 2:
         raise ValueError("At least two layers are required.")
 
-    layers = []
-    for alpha in range(l):
-        A = adj[alpha * n:(alpha + 1) * n, alpha * n:(alpha + 1) * n].astype(float)
+    layer_matrices = []
+    for alpha in range(layers):
+        A = adj[alpha * nodes:(alpha + 1) * nodes, alpha * nodes:(alpha + 1) * nodes].astype(float)
         if not weighted:
             A = (A > 0).astype(float)
-        layers.append(A)
+        layer_matrices.append(A)
 
     # Running element-wise minimum: nonzero only where all layers share the edge.
-    overlap = layers[0]
-    for layer in layers[1:]:
+    overlap = layer_matrices[0]
+    for layer in layer_matrices[1:]:
         overlap = _sparse_pmin(overlap, layer)
-    norm_total = sum(float(layer.sum()) for layer in layers)
+    norm_total = sum(float(layer.sum()) for layer in layer_matrices)
 
     sum_overlap = float(overlap.sum())
-    avg = l * sum_overlap / norm_total if norm_total != 0 else 0.0
+    avg = layers * sum_overlap / norm_total if norm_total != 0 else 0.0
 
     # R checks `sum(A - A^T) == 0` before halving.  However sum(A) == sum(A^T)
     # for any matrix (transposing preserves the total), so R's condition is
@@ -117,15 +117,15 @@ def compute_average_global_overlap(
     avg /= 2
 
     if logger and logger.isEnabledFor(logging.DEBUG):
-        logger.debug(f"sum(O): {sum_overlap}, NormTotal: {norm_total}, L: {l}")
+        logger.debug(f"sum(O): {sum_overlap}, NormTotal: {norm_total}, L: {layers}")
 
     return avg
 
 
 def compute_average_global_overlap_matrix(
     adj: sp.csr_matrix,
-    n: int,
-    l: int,
+    *, nodes: int,
+    layers: int,
     weighted: bool = False,
     logger: logging.Logger | None = None,
 ) -> np.ndarray:
@@ -138,35 +138,35 @@ def compute_average_global_overlap_matrix(
 
     This is a Dice-like similarity coefficient in [0, 1].  The diagonal is 1.
     Args:
-        adj: scipy.sparse.csr_matrix - supra-adjacency matrix (n*l, n*l)
-        n: int - number of nodes per layer
-        l: int - number of layers
+        adj: scipy.sparse.csr_matrix - supra-adjacency matrix (nodes*layers, nodes*layers)
+        nodes: int - number of nodes per layer
+        layers: int - number of layers
         weighted: bool - if True use actual edge weights; if False binarize first (default: False)
         logger: Optional[logging.Logger] - logger for debugging (default: None)
 
     Returns:
-        numpy.ndarray of shape (l, l) - symmetric overlap matrix with 1s on diagonal
+        numpy.ndarray of shape (layers, layers) - symmetric overlap matrix with 1s on diagonal
 
     Reference:
         De Domenico et al. (2015) "Structural reducibility of multilayer networks",
         Nature Communications, 6, 6864.
     """
-    if l < 2:
+    if layers < 2:
         raise ValueError("At least two layers are required.")
 
-    layers = []
+    layer_matrices = []
     layer_sums = []
-    for alpha in range(l):
-        A = adj[alpha * n:(alpha + 1) * n, alpha * n:(alpha + 1) * n].astype(float)
+    for alpha in range(layers):
+        A = adj[alpha * nodes:(alpha + 1) * nodes, alpha * nodes:(alpha + 1) * nodes].astype(float)
         if not weighted:
             A = (A > 0).astype(float)
-        layers.append(A)
+        layer_matrices.append(A)
         layer_sums.append(float(A.sum()))
 
-    M = np.eye(l, dtype=float)
-    for l1 in range(l - 1):
-        for l2 in range(l1 + 1, l):
-            O = _sparse_pmin(layers[l1], layers[l2])
+    M = np.eye(layers, dtype=float)
+    for l1 in range(layers - 1):
+        for l2 in range(l1 + 1, layers):
+            O = _sparse_pmin(layer_matrices[l1], layer_matrices[l2])
             denom = layer_sums[l1] + layer_sums[l2]
             val = 2.0 * float(O.sum()) / denom if denom != 0 else 0.0
             M[l1, l2] = val
@@ -180,8 +180,8 @@ def compute_average_global_overlap_matrix(
 
 def compute_average_global_node_overlap_matrix(
     adj: sp.csr_matrix,
-    n: int,
-    l: int,
+    *, nodes: int,
+    layers: int,
     logger: logging.Logger | None = None,
 ) -> np.ndarray:
     """
@@ -195,32 +195,32 @@ def compute_average_global_node_overlap_matrix(
     The diagonal is 1 (all active nodes overlap with themselves).
 
     Args:
-        adj: scipy.sparse.csr_matrix - supra-adjacency matrix (n*l, n*l)
-        n: int - number of nodes per layer
-        l: int - number of layers
+        adj: scipy.sparse.csr_matrix - supra-adjacency matrix (nodes*layers, nodes*layers)
+        nodes: int - number of nodes per layer
+        layers: int - number of layers
         logger: Optional[logging.Logger] - logger for debugging (default: None)
 
     Returns:
-        numpy.ndarray of shape (l, l) - symmetric overlap matrix with 1s on diagonal
+        numpy.ndarray of shape (layers, layers) - symmetric overlap matrix with 1s on diagonal
 
     Reference:
         De Domenico et al. (2015) "Structural reducibility of multilayer networks",
         Nature Communications, 6, 6864.
     """
-    if l < 2:
+    if layers < 2:
         raise ValueError("At least two layers are required.")
 
     active = []
-    for alpha in range(l):
-        A = adj[alpha * n:(alpha + 1) * n, alpha * n:(alpha + 1) * n]
+    for alpha in range(layers):
+        A = adj[alpha * nodes:(alpha + 1) * nodes, alpha * nodes:(alpha + 1) * nodes]
         out_deg = np.asarray(A.sum(axis=1)).ravel()   # row sums
         in_deg  = np.asarray(A.sum(axis=0)).ravel()   # col sums
         active.append(set(np.where((out_deg > 0) | (in_deg > 0))[0]))
 
-    M = np.eye(l, dtype=float)
-    for l1 in range(l - 1):
-        for l2 in range(l1 + 1, l):
-            val = len(active[l1] & active[l2]) / n
+    M = np.eye(layers, dtype=float)
+    for l1 in range(layers - 1):
+        for l2 in range(l1 + 1, layers):
+            val = len(active[l1] & active[l2]) / nodes
             M[l1, l2] = val
             M[l2, l1] = val
 

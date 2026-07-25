@@ -118,7 +118,7 @@ def test_pagerank_transition_matrix_is_stochastic():
     )
 
     transition = parsing.build_transition_matrix_from_adjacency_matrix(
-        adjacency, n=4, l=1, kind="pagerank", alpha=0.85
+        adjacency, nodes=4, layers=1, kind="pagerank", alpha=0.85
     )
 
     np.testing.assert_allclose(

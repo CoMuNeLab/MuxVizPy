@@ -86,6 +86,9 @@ def _initialize_factors(
         return backend.random_init(shapes, random_state)
     
     elif method == "hosvd":
+        if coords is None or values is None:
+            raise ValueError("hosvd initialization requires coords and values")
+
         # truncated svd init for sparse tensors via unfolding.
         factors = []
 

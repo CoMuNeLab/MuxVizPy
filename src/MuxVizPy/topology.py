@@ -73,7 +73,7 @@ def get_multi_LIC(obj: list[gt.Graph] | list[sps.spmatrix], obj_type: str = "gli
     
     return lcc_inters
     
-def get_multi_LVC(g_list: list[gt.Graph], printt: bool = True) -> np.ndarray:
+def get_multi_LVC(g_list: list[gt.Graph], printt: bool = True) -> np.ndarray | list:
     """
     Return the largest versatile component (LVC) by iteratively pruning nodes
     absent from the intersection of per-layer LCCs.

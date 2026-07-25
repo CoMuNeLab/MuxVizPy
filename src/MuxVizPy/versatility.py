@@ -877,7 +877,10 @@ def compute_multi_authority_centrality(
 # ---------------------------------------------------------------------------
 
 def get_multi_degree(
-    supra: sps.spmatrix, layers: int, nodes: int,
+    supra: sps.spmatrix,
+    *,
+    nodes: int,
+    layers: int,
     is_directed: bool | None = None,
     backend: Literal["muxvizpy", "hornet"] = "muxvizpy",
     logger: logging.Logger | None = None,
@@ -885,14 +888,17 @@ def get_multi_degree(
     """
     Computes the degree of each physical node by aggregating the supra-adjacency matrix.
 
+    ``nodes`` and ``layers`` are keyword-only. They are both plain integers, so a
+    positional call could transpose them silently.
+
     Parameters
     ----------
     supra : scipy.sparse.spmatrix
         Supra-adjacency matrix of the multilayer network.
-    layers : int
-        Number of layers.
     nodes : int
         Number of physical nodes.
+    layers : int
+        Number of layers.
     is_directed : bool, optional
         For the ``"hornet"`` backend, True returns in + out degree and False
         returns half that value. The default is True. This argument does not
@@ -986,18 +992,21 @@ def get_multi_RW_centrality_edge_colored(node_tensor: list[sps.spmatrix], cval: 
         result["vers"] /= max_value
     return result
 
-def get_multi_Kcore_centrality(supra: sps.spmatrix, layers: int, nodes: int):
+def get_multi_Kcore_centrality(supra: sps.spmatrix, *, nodes: int, layers: int):
     """
     Computes multilayer k-core centrality as the minimum core index across all layers.
+
+    ``nodes`` and ``layers`` are keyword-only. They are both plain integers, so a
+    positional call could transpose them silently.
 
     Parameters
     ----------
     supra : scipy.sparse matrix
         Supra-adjacency matrix.
-    layers : int
-        Number of layers.
     nodes : int
         Number of physical nodes.
+    layers : int
+        Number of layers.
 
     Returns
     -------

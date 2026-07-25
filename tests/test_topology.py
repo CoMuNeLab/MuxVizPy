@@ -29,7 +29,7 @@ from MuxVizPy.utils.parsing import (
 @pytest.fixture(scope="session")
 def net_glist(net_adjacency, net_n, net_l):
     """Per-layer gt.Graph list (intra-layer edges only) for the current network config."""
-    return supra_adjacency_to_network_list(net_adjacency, net_l, net_n)
+    return supra_adjacency_to_network_list(net_adjacency, nodes=net_n, layers=net_l)
 
 
 # ============================================================================
@@ -114,15 +114,15 @@ class TestTopologyCorrectness:
     # --- get_connected_components --------------------------------------------
 
     def test_cc_returns_ndarray(self, net_adjacency, net_n, net_l):
-        result = topology.get_connected_components(net_adjacency, net_l, net_n)
+        result = topology.get_connected_components(net_adjacency, nodes=net_n, layers=net_l)
         assert isinstance(result, np.ndarray)
 
     def test_cc_shape(self, net_adjacency, net_n, net_l):
-        result = topology.get_connected_components(net_adjacency, net_l, net_n)
+        result = topology.get_connected_components(net_adjacency, nodes=net_n, layers=net_l)
         assert result.shape == (net_n,)
 
     def test_cc_labels_non_negative(self, net_adjacency, net_n, net_l):
-        result = topology.get_connected_components(net_adjacency, net_l, net_n)
+        result = topology.get_connected_components(net_adjacency, nodes=net_n, layers=net_l)
         assert np.all(result >= 0)
 
     def test_cc_two_components(self):
@@ -153,49 +153,49 @@ class TestTopologyCorrectness:
     def test_path_stats_returns_dict(self, net_adjacency, net_n, net_l, network_config):
         if network_config == "random_large":
             pytest.skip("path statistics too slow for random_large")
-        result = topology.get_multi_path_statistics(net_adjacency, net_l, net_n)
+        result = topology.get_multi_path_statistics(net_adjacency, nodes=net_n, layers=net_l)
         assert isinstance(result, dict)
 
     def test_path_stats_keys(self, net_adjacency, net_n, net_l, network_config):
         if network_config == "random_large":
             pytest.skip("path statistics too slow for random_large")
-        result = topology.get_multi_path_statistics(net_adjacency, net_l, net_n)
+        result = topology.get_multi_path_statistics(net_adjacency, nodes=net_n, layers=net_l)
         assert set(result.keys()) == {"distance_matrix", "avg_path_length", "closeness"}
 
     def test_path_stats_distance_matrix_shape(self, net_adjacency, net_n, net_l, network_config):
         if network_config == "random_large":
             pytest.skip("path statistics too slow for random_large")
-        result = topology.get_multi_path_statistics(net_adjacency, net_l, net_n)
+        result = topology.get_multi_path_statistics(net_adjacency, nodes=net_n, layers=net_l)
         assert result["distance_matrix"].shape == (net_n, net_n)
 
     def test_path_stats_diagonal_zero(self, net_adjacency, net_n, net_l, network_config):
         if network_config == "random_large":
             pytest.skip("path statistics too slow for random_large")
-        result = topology.get_multi_path_statistics(net_adjacency, net_l, net_n)
+        result = topology.get_multi_path_statistics(net_adjacency, nodes=net_n, layers=net_l)
         np.testing.assert_allclose(np.diag(result["distance_matrix"]), 0.0)
 
     def test_path_stats_distances_non_negative(self, net_adjacency, net_n, net_l, network_config):
         if network_config == "random_large":
             pytest.skip("path statistics too slow for random_large")
-        result = topology.get_multi_path_statistics(net_adjacency, net_l, net_n)
+        result = topology.get_multi_path_statistics(net_adjacency, nodes=net_n, layers=net_l)
         assert np.all(result["distance_matrix"] >= 0)
 
     def test_path_stats_avg_path_length_positive(self, net_adjacency, net_n, net_l, network_config):
         if network_config == "random_large":
             pytest.skip("path statistics too slow for random_large")
-        result = topology.get_multi_path_statistics(net_adjacency, net_l, net_n)
+        result = topology.get_multi_path_statistics(net_adjacency, nodes=net_n, layers=net_l)
         assert result["avg_path_length"] > 0
 
     def test_path_stats_closeness_length(self, net_adjacency, net_n, net_l, network_config):
         if network_config == "random_large":
             pytest.skip("path statistics too slow for random_large")
-        result = topology.get_multi_path_statistics(net_adjacency, net_l, net_n)
+        result = topology.get_multi_path_statistics(net_adjacency, nodes=net_n, layers=net_l)
         assert len(result["closeness"]) == net_n
 
     def test_path_stats_closeness_non_negative(self, net_adjacency, net_n, net_l, network_config):
         if network_config == "random_large":
             pytest.skip("path statistics too slow for random_large")
-        result = topology.get_multi_path_statistics(net_adjacency, net_l, net_n)
+        result = topology.get_multi_path_statistics(net_adjacency, nodes=net_n, layers=net_l)
         assert np.all(np.array(result["closeness"]) >= 0)
 
     def test_path_stats_disconnected_pairs_are_infinite(self):
@@ -241,23 +241,23 @@ class TestTopologyCorrectness:
     # --- get_SP_similarity_matrix --------------------------------------------
 
     def test_sp_sim_returns_ndarray(self, net_adjacency, net_n, net_l):
-        result = topology.get_SP_similarity_matrix(net_adjacency, net_l, net_n)
+        result = topology.get_SP_similarity_matrix(net_adjacency, nodes=net_n, layers=net_l)
         assert isinstance(result, np.ndarray)
 
     def test_sp_sim_shape(self, net_adjacency, net_n, net_l):
-        result = topology.get_SP_similarity_matrix(net_adjacency, net_l, net_n)
+        result = topology.get_SP_similarity_matrix(net_adjacency, nodes=net_n, layers=net_l)
         assert result.shape == (net_l, net_l)
 
     def test_sp_sim_diagonal_is_one(self, net_adjacency, net_n, net_l):
-        result = topology.get_SP_similarity_matrix(net_adjacency, net_l, net_n)
+        result = topology.get_SP_similarity_matrix(net_adjacency, nodes=net_n, layers=net_l)
         np.testing.assert_allclose(np.diag(result), 1.0)
 
     def test_sp_sim_symmetric(self, net_adjacency, net_n, net_l):
-        result = topology.get_SP_similarity_matrix(net_adjacency, net_l, net_n)
+        result = topology.get_SP_similarity_matrix(net_adjacency, nodes=net_n, layers=net_l)
         np.testing.assert_array_almost_equal(result, result.T)
 
     def test_sp_sim_range_in_01(self, net_adjacency, net_n, net_l):
-        result = topology.get_SP_similarity_matrix(net_adjacency, net_l, net_n)
+        result = topology.get_SP_similarity_matrix(net_adjacency, nodes=net_n, layers=net_l)
         assert np.all(result >= 0.0) and np.all(result <= 1.0)
 
 
@@ -281,7 +281,7 @@ class TestTopologyReference:
         if "closeness" not in net_muxviz_results:
             pytest.skip(f"'closeness' not in reference results for '{network_config}'")
 
-        stats = topology.get_multi_path_statistics(net_adjacency, net_l, net_n)
+        stats = topology.get_multi_path_statistics(net_adjacency, nodes=net_n, layers=net_l)
         computed = np.array(stats["closeness"], dtype=np.float64)
         # GetMultiClosenessCentrality returns a named list in R; older JSON entries
         # may have been serialized as {"closeness": [...]} instead of a plain array.
@@ -305,7 +305,7 @@ class TestTopologyReference:
         if "sp_similarity" not in net_muxviz_results:
             pytest.skip(f"'sp_similarity' not in reference results for '{network_config}'")
 
-        computed = topology.get_SP_similarity_matrix(net_adjacency, net_l, net_n)
+        computed = topology.get_SP_similarity_matrix(net_adjacency, nodes=net_n, layers=net_l)
         r_flat = np.array(net_muxviz_results["sp_similarity"], dtype=np.float64)
         expected = r_flat.reshape(net_l, net_l, order="F")
 

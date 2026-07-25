@@ -1,10 +1,11 @@
 import logging
-import typing
+
+import graph_tool as gt
 import numpy as np
 import scipy as sp
 from scipy.sparse import csr_matrix
 from tqdm import tqdm
-import graph_tool as gt
+
 
 def get_mod(
     g_multi,
@@ -84,7 +85,7 @@ def inter_layer_assortativity(
     degrees = [g_list[i].get_total_degrees(np.arange(g_list[i].num_vertices())) for i in range(layers)]
     pearson_ass = np.zeros([layers, layers])
     spearman_ass = np.zeros([layers, layers])
-    
+
     for l1 in range(layers):
         for l2 in range(layers):
             pearson_ass[l1,l2] = sp.stats.pearsonr(degrees[l1], degrees[l2]).statistic
@@ -96,7 +97,7 @@ def compute_local_clustering_coefficient(
     adj: sp.sparse.spmatrix,
     n: int,
     l: int,
-    logger: typing.Optional[logging.Logger] = None,
+    logger: logging.Logger | None = None,
 ) -> np.ndarray:
     """
     Compute the multilayer local clustering coefficient for each physical node.

@@ -4,10 +4,13 @@ Provides CPU (numpy/scipy) and optional GPU (RAPIDS/cuML) bacends for the sparse
 """
 
 from __future__ import annotations
-import numpy as np
+
 import warnings
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
+
+import numpy as np
+
 if TYPE_CHECKING:
     from numpy.typing import DTypeLike, NDArray
 
@@ -62,7 +65,7 @@ class CPBackend(ABC):
     def gram_matrix(self, factor: NDArray) -> NDArray:
         """
         Compute the Gram matrix A^T @ A efficiently.
-        
+
         Args:
             factor (NDArray): Factor matrix (dim, rank)
         Returns:
@@ -74,7 +77,7 @@ class CPBackend(ABC):
     def hadamard_gram(self, gramians: list[NDArray]) -> NDArray:
         """
         Compute the elementwise product of multiple Gram matrices.
-        
+
         Args:
             gramians (list[NDArray]): List of Gram matrices to be multiplied (each of shape (rank, rank))
         Returns:
@@ -106,7 +109,7 @@ class CPBackend(ABC):
         Args:
             factors (list[NDArray]): List of factor matrices to be normalized (each of shape (dim, rank))
             weights (NDArray | None): The component weights to be updated based on the norms (shape: rank). Defaults to ones when omitted.
-        
+
         Return:
             tuple[list[NDArray], NDArray]: A tuple containing the list of normalized factor matrices and the updated weights.
         """
@@ -120,7 +123,7 @@ class CPBackend(ABC):
         Args:
             shapes (list[tuple[int,int]]): List of shapes for each factor matrix (e.g., [(N, rank), (L, rank), ...])
             random_state (np.random.Generator | int | None): Random state for reproducibility. Can be a numpy Generator, an integer seed, or None for default randomness.
-        
+
         Returns:
             list[NDArray]: A list of randomly initialized factor matrices corresponding to the provided shapes.
         """
@@ -137,7 +140,7 @@ class CPBackend(ABC):
             NDArray: The array transferred to the backend device (e.g., GPU array for RAPIDS).
         """
         return array
-    
+
     def to_numpy(self, arr: NDArray) -> np.ndarray:
         """Transfer array from backend device to NumPy.
 
@@ -150,7 +153,7 @@ class CPBackend(ABC):
             NumPy array on CPU.
         """
         return np.asarray(arr)
-    
+
     def get_time(self) -> float:
         """
         Get the current time for performance measurement. For GPU backends, this should synchronize and return accurate timing.
@@ -160,7 +163,7 @@ class CPBackend(ABC):
         """
         import time
         return time.time()
-    
+
     @abstractmethod
     def multiply_gather(
             self, values: NDArray, indices: list[NDArray], factors: list[NDArray], exclude_mode: int
@@ -228,7 +231,7 @@ class NumPyBackend(CPBackend):
             return linalg.cho_solve(cho, rhs.T).T
         except linalg.LinAlgError:
             # Fallback to general solver if cholesky fails (e.g., if reg_grams is not positive definite)
-            warnings.warn("Cholesky factorization failed, falling back to general least-squares solver. Consider increasing regularization.")
+            warnings.warn("Cholesky factorization failed, falling back to general least-squares solver. Consider increasing regularization.", stacklevel=2)
             return linalg.solve(reg_grams, rhs.T, assume_a="pos").T # still assume that the matrix is positive definite, but solve with a more robust method that can handle near-singularity better than cho_solve.
 
     def normalize_factors(self, factors: list[NDArray], weights: NDArray | None = None) -> tuple[list[NDArray], NDArray]:
@@ -246,7 +249,7 @@ class NumPyBackend(CPBackend):
             normalized.append(factor / norms)
             weights *= norms
         return normalized, weights
-    
+
     def multiply_gather(self, values, indices, factors, exclude_mode):
         rank = factors[0].shape[1]
         n_modes = len(factors)
@@ -263,7 +266,7 @@ class NumPyBackend(CPBackend):
                 kr_contrib *= factor_vals
 
         return kr_contrib
-    
+
     def maximum(self, array: NDArray, value: float) -> NDArray:
         return np.maximum(array, value)
 
@@ -278,7 +281,7 @@ class NumPyBackend(CPBackend):
         else:
             rng = random_state
         return [rng.standard_normal(shape) for shape in shapes]
-    
+
 class RAPIDSBackend(CPBackend):
     """
     GPU backend using RAPIDS cuPy.
@@ -307,27 +310,27 @@ class RAPIDSBackend(CPBackend):
             raise ImportError(
                 f"RAPIDS backend requires CuPy. {str(e)}\n{_CUPY_INSTALL_MSG}"
             ) from e
-        
+
         try:
             device_count = cp.cuda.runtime.getDeviceCount()
             if device_count == 0:
                 raise RuntimeError("No CUDA-compatible GPU detected. RAPIDS backend cannot be used.")
         except cp.cuda.runtime.CUDARuntimeError as e:
             raise RuntimeError(f"CUDA runtime error: {str(e)}. Ensure that NVIDIA drivers and CUDA toolkit are properly installed.") from e
-        
+
     @property
     def name(self) -> str:
         return "rapids"
-    
+
     def zeros(self, shape: tuple[int, ...], dtype: DTypeLike | None = None) -> NDArray:
         if dtype is None:
             dtype = np.float64
         return self._cp.zeros(shape, dtype=dtype)
-    
+
     def scatter_add(self, target: NDArray, indices: NDArray, values: NDArray) -> None:
         if not isinstance(target, self._cp.ndarray):
             raise TypeError("Target array must be a CuPy array for RAPIDS backend.")
-        
+
         # ensure arrays are on GPU
         indices_gpu = self._cp.asarray(indices) if not isinstance(indices, self._cp.ndarray) else indices
         values_gpu = self._cp.asarray(values) if not isinstance(values, self._cp.ndarray) else values
@@ -338,13 +341,13 @@ class RAPIDSBackend(CPBackend):
 
     def gram_matrix(self, factor: NDArray) -> NDArray:
         return factor.T @ factor
-    
+
     def hadamard_gram(self, gramians: list[NDArray]) -> NDArray:
         result = gramians[0].copy()
         for g in gramians[1:]:
             result *= g
         return result
-    
+
     def solve_least_squares(self, grams: NDArray, rhs: NDArray, regularization: float) -> NDArray:
         cp = self._cp
         rank = grams.shape[0]
@@ -362,7 +365,7 @@ class RAPIDSBackend(CPBackend):
             return X.T
         except cp.linalg.LinAlgError as e:
             # Fallback to general solver if Cholesky fails
-            warnings.warn(f"Cholesky factorization failed on GPU: {str(e)}. Falling back to general least-squares solver. Consider increasing regularization.")
+            warnings.warn(f"Cholesky factorization failed on GPU: {str(e)}. Falling back to general least-squares solver. Consider increasing regularization.", stacklevel=2)
             return cp.linalg.solve(reg_grams, rhs.T).T
 
     def normalize_factors(self, factors: list[NDArray], weights: NDArray | None = None) -> tuple[list[NDArray], NDArray]:
@@ -399,7 +402,7 @@ class RAPIDSBackend(CPBackend):
         if isinstance(arr, self._cp.ndarray):
             return arr.get()
         return np.asarray(arr)
-    
+
     def get_time(self) -> float:
         cp = self._cp
         # synchronize to ensure all GPU operations are complete before timing
@@ -417,7 +420,7 @@ class RAPIDSBackend(CPBackend):
         # Ensure values is on GPU and broadcast to (nvalues, rank)
         if not isinstance(values, cp.ndarray):
             values = cp.asarray(values)
-        
+
         kr_contrib = cp.broadcast_to(
             values[:, cp.newaxis], (len(values), rank)
         ).copy() # (nvalues, rank)
@@ -431,10 +434,10 @@ class RAPIDSBackend(CPBackend):
                 factor_vals = factors[m][indices[m], :] # (nvalues, rank)
                 kr_contrib *= factor_vals
         return kr_contrib
-    
+
     def compute_norm(self, array: NDArray) -> float:
         return float(self._cp.linalg.norm(array))
-    
+
 # Backend registry
 _BACKENDS: dict[str, type[CPBackend]] = {
     "numpy": NumPyBackend,
@@ -465,16 +468,16 @@ def get_backend(name: str = "auto", warn_fallback: bool = True) -> CPBackend:
             if warn_fallback:
                 warnings.warn(
                     f"GPU backend not available, fallback to numpy cpu. "
-                    f"Reason {e}", 
+                    f"Reason {e}",
                     UserWarning,
                     stacklevel=2,
                 )
             return NumPyBackend()
-        
+
     if name not in _BACKENDS:
         available = list(_BACKENDS.keys())
         raise ValueError(f"Unknown backend '{name}'. Available: {available}")
-    
+
     try:
         return _BACKENDS[name]()
     except (ImportError, RuntimeError) as e:
@@ -499,14 +502,14 @@ def is_backend_available(name: str) -> bool:
     """
     Check if a backend is available (dependencies are installed)
 
-    Args: 
+    Args:
         name: backend name to check
     Returns:
         True if backend can be initialized, False otherwise
     """
     if name not in _BACKENDS:
         return False
-    
+
     try:
         get_backend(name, warn_fallback=False)
         return True

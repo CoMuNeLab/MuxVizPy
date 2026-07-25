@@ -1,9 +1,9 @@
-import warnings
 import logging
+import warnings
+
 import numpy as np
 import scipy.sparse as sps
 import scipy.sparse.linalg as spla
-from typing import Optional
 
 _VALID_SOLVERS = ("direct", "neumann", "gmres", "bicgstab")
 _KRYLOV_SOLVERS = ("gmres", "bicgstab")
@@ -16,7 +16,7 @@ def _katz_neumann(
     *,
     maxiter: int = 1000,
     tol: float = 1e-6,
-    logger: Optional[logging.Logger] = None,
+    logger: logging.Logger | None = None,
 ) -> np.ndarray:
     """Solve (I - alpha*A) x = b by Richardson / Neumann-series iteration.
 

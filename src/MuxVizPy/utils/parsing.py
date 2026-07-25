@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import polars as pl
-import scipy.sparse as sp
-import numpy as np
-import typing
 import logging
-import pandas as pd
+
 import graph_tool as gt
 import graph_tool.spectral
+import numpy as np
+import pandas as pd
+import polars as pl
+import scipy.sparse as sp
 
 try:
     import torch
@@ -25,7 +25,7 @@ def _require_torch():
             "torch is required for this function. "
             "Install it with: uv pip install torch --index-url https://download.pytorch.org/whl/cpu"
         )
-    
+
 def build_interlayer_coupling_from_tensor(t: torch.Tensor, omega: float, kind: str) -> torch.Tensor:
     """
     Build the interlayer coupling from a tensor of only intralayer interactions.
@@ -111,7 +111,7 @@ def build_interlayer_coupling_from_tensor(t: torch.Tensor, omega: float, kind: s
         coords = np.stack([all_nodes, all_lf, all_nodes, all_lt], axis=1)
         indices = torch.tensor(coords, dtype=torch.long).t().contiguous()
         values = torch.full((indices.shape[1],), omega, dtype=torch.float32)
-    
+
     elif kind == "temporal":
         # Vectorized version for directed chain coupling
         rows = np.arange(n)
@@ -324,7 +324,7 @@ def build_tensor_from_list_of_graphs(
     _require_torch()
     if not glist:
         raise ValueError("Input list of graphs is empty.")
-    
+
     num_layers = len(glist)
     num_nodes = glist[0].num_vertices()
     for g in glist:
@@ -568,7 +568,7 @@ def build_laplacian_from_tensor(t: torch.Tensor) -> torch.Tensor:
     _require_torch()
     if not t.is_sparse:
         raise NotImplementedError("Input tensor must be a sparse tensor.")
-    
+
     n, l = t.shape[0], t.shape[1]
     if len(t.shape) != 4 or t.shape[0] != n or t.shape[2] != n or t.shape[1] != l or t.shape[3] != l:
         raise ValueError("Input tensor must have shape (num_nodes, num_layers, num_nodes, num_layers).")
@@ -814,7 +814,7 @@ def build_transition_matrix_from_adjacency_matrix(
         kind: str,
         *,
         alpha: float | None = None,
-        logger: typing.Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
 ) -> sp.csr_matrix:
     """
     Build supra-transition matrix from a supra-adjacency matrix (NL x NL).

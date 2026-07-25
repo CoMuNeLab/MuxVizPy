@@ -1,9 +1,10 @@
-import scipy.sparse as sp
-import numpy as np
 import logging
-import typing
 
-def compute_average_global_clustering_coefficient(adj: sp.csr_matrix, n:int, l: int, logger: typing.Optional[logging.Logger] = None) -> float:
+import numpy as np
+import scipy.sparse as sp
+
+
+def compute_average_global_clustering_coefficient(adj: sp.csr_matrix, n:int, l: int, logger: logging.Logger | None = None) -> float:
     """
     Compute the average global clustering coefficient for a multilayer network.
     This implementation matches the R version from the reference, using the formula:
@@ -30,7 +31,6 @@ def compute_average_global_clustering_coefficient(adj: sp.csr_matrix, n:int, l: 
         De Domenico et al. (2013) "Mathematical Formulation of Multilayer Networks", Physical review X, 3(4), p.041022.
     """
 
-    NL = n*l
     # compute numerator
     num = float((adj.dot(adj).dot(adj)).diagonal().sum())
     # compute denominator
@@ -64,7 +64,7 @@ def compute_average_global_overlap(
     n: int,
     l: int,
     weighted: bool = False,
-    logger: typing.Optional[logging.Logger] = None,
+    logger: logging.Logger | None = None,
 ) -> float:
     """
     Compute the average global edge overlap for a multilayer network.
@@ -127,7 +127,7 @@ def compute_average_global_overlap_matrix(
     n: int,
     l: int,
     weighted: bool = False,
-    logger: typing.Optional[logging.Logger] = None,
+    logger: logging.Logger | None = None,
 ) -> np.ndarray:
     """
     Compute the pairwise average global edge overlap matrix (L×L).
@@ -182,7 +182,7 @@ def compute_average_global_node_overlap_matrix(
     adj: sp.csr_matrix,
     n: int,
     l: int,
-    logger: typing.Optional[logging.Logger] = None,
+    logger: logging.Logger | None = None,
 ) -> np.ndarray:
     """
     Compute the pairwise average global node overlap matrix (L×L).

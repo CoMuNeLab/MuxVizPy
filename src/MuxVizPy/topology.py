@@ -3,6 +3,7 @@ import scipy as sp
 import scipy.sparse as sps
 from scipy.sparse import find, identity, coo_matrix
 import graph_tool as gt
+import graph_tool.topology
 import graph_tool.correlations as gtcorr
 import graph_tool.clustering as gtclust
 from functools import reduce

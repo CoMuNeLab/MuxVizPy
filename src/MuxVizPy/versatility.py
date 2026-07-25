@@ -4,6 +4,7 @@ import scipy.sparse as sps
 import pandas as pd
 from scipy.sparse import find, identity, coo_matrix
 import graph_tool as gt
+import graph_tool.topology
 from graph_tool import centrality #, inference
 import graph_tool.correlations as gtcorr
 import graph_tool.clustering as gtclust

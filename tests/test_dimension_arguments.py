@@ -1,20 +1,28 @@
 """Node and layer counts must be passed by name, everywhere in the package.
 
 Both are plain integers, so a transposed positional call cannot be detected at
-runtime. Rather than list the functions, these tests state the rule and check it
-against whatever the modules currently define, so a new function that takes both
-counts positionally fails here rather than shipping.
+runtime. Rather than list the functions or the modules, these tests state the rule
+and check it against whatever the package currently defines, so a new function that
+takes both counts positionally fails here rather than shipping.
 """
 
+import importlib
 import inspect
 
 import pytest
-import scipy.sparse as sp
 
-from MuxVizPy import global_descriptors, mesoscale, topology, versatility
-from MuxVizPy.utils import parsing
+from MuxVizPy import _LAZY_MODULES
 
-MODULES = [global_descriptors, mesoscale, topology, versatility, parsing]
+UTILS_MODULES = ["parsing", "io", "decomposition_utils", "katz_utils"]
+
+
+def analysis_modules():
+    names = [f"MuxVizPy.{n}" for n in _LAZY_MODULES if n != "utils"]
+    names += [f"MuxVizPy.utils.{n}" for n in UTILS_MODULES]
+    return [importlib.import_module(name) for name in names]
+
+
+MODULES = analysis_modules()
 
 
 def dimension_functions():

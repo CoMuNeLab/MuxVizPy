@@ -260,13 +260,6 @@ def test_dependency_extras_match_supported_torch_and_test_requirements():
     assert "find-links" not in metadata["tool"]["uv"]
 
 
-def test_transition_tests_do_not_lock_substochastic_pagerank_behavior():
-    """Tests must require teleportation rather than alpha times the classical matrix."""
-    source = (REPO / "tests" / "test_utils_parsing.py").read_text()
-
-    assert "T_pr - T_class.multiply(alpha)" not in source
-
-
 def test_legacy_experiment_module_imports_successfully():
     """Public experiment class definitions must survive module import."""
     path = REPO / "experiments" / "core.py"

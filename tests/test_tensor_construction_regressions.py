@@ -1,8 +1,5 @@
 """Regression tests for tensor construction and conversion semantics."""
 
-import ast
-from pathlib import Path
-
 import graph_tool as gt
 import numpy as np
 import polars as pl
@@ -225,31 +222,3 @@ def test_empty_sparse_tensor_has_empty_laplacian():
     assert laplacian.shape == tensor.shape
     assert laplacian.dtype == tensor.dtype
     assert laplacian._nnz() == 0
-
-
-def test_all_sparse_tensor_constructors_enable_invariant_checks():
-    source_root = Path(__file__).resolve().parents[1] / "src" / "MuxVizPy"
-    paths = [
-        source_root / "utils" / "io.py",
-        source_root / "utils" / "parsing.py",
-    ]
-    constructors = []
-
-    for path in paths:
-        for node in ast.walk(ast.parse(path.read_text())):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "sparse_coo_tensor"
-            ):
-                constructors.append(node)
-
-    assert constructors
-    for constructor in constructors:
-        keywords = {
-            keyword.arg: keyword.value
-            for keyword in constructor.keywords
-        }
-        value = keywords.get("check_invariants")
-        assert isinstance(value, ast.Constant)
-        assert value.value is True

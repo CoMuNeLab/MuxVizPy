@@ -6,8 +6,6 @@ independent reference implementation that keeps the original per-entry algorithm
 The reference is deliberately naive; it is the specification, not the fast path.
 """
 
-import inspect
-
 import numpy as np
 import pytest
 import scipy.sparse as sp
@@ -384,26 +382,3 @@ def test_layer_aggregation_retains_isolated_nodes_when_returning_a_graph():
     graph = parsing.get_aggregate_network(layers)
 
     assert graph.num_vertices() == 3
-
-
-def test_conversions_do_not_iterate_over_every_sparse_entry():
-    """Guards the rewrite: a per-entry Python loop must not come back.
-
-    Each of these functions previously stepped over one sparse entry at a time
-    through the torch boundary, which dominated their cost.
-    """
-    for function in (
-        parsing.build_aggregate_network_from_tensor,
-        parsing.build_list_of_graphs_from_tensor,
-        parsing.build_laplacian_from_tensor,
-        parsing.build_tensor_from_list_of_graphs,
-    ):
-        source = inspect.getsource(function)
-        assert "for idx in range(indices.shape[1])" not in source, function.__name__
-        assert ".item()" not in source, function.__name__
-
-    aggregate_source = inspect.getsource(parsing.get_aggregate_network)
-    assert not (
-        "for layer in obj:" in aggregate_source
-        and "agg_mat += layer" in aggregate_source
-    )

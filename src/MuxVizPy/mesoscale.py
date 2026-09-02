@@ -29,27 +29,31 @@ def get_mod(
     -------
     list
         ``[modules_list, modularity_list]`` where each element is a list of
-        length ``n_iter``.  If ``return_state=True``, a third element
-        containing the last fitted ``BlockState`` is appended.
+        length ``n_iter``.  ``modules_list`` holds the number of non-empty
+        blocks in each fit and ``modularity_list`` the corresponding modularity.
+        If ``return_state=True``, a third element containing the last fitted
+        ``BlockState`` is appended.
     """
-    from graph_tool import inference as gti  # <- Moved here
+    import graph_tool.draw  # noqa: F401  # import before inference to avoid a circular import
+    from graph_tool import inference as gti  # imported lazily
 
     modules_list = []
     modularity_list = []
+    state_multi = None
 
-    for It_Com in tqdm(range(n_iter)):
-        state_multi = gti.minimize_blockmodel_dl(g_multi,
-            state_args=dict(
-                base_type=gti.LayeredBlockState,
-                state_args=dict(ec=g_multi.ep.weight, layers=True)
-            )
+    for _ in tqdm(range(n_iter)):
+        state_multi = gti.minimize_blockmodel_dl(
+            g_multi,
+            state=gti.LayeredBlockState,
+            state_args=dict(ec=g_multi.ep.weight, independent=True),
         )
 
-        modules_list.append(state_multi.get_nonempty_B())
-        modularity_list.append(gti.modularity(g_multi, state_multi.get_blocks()))
+        blocks = state_multi.get_blocks()
+        modules_list.append(int(np.unique(blocks.get_array()).size))
+        modularity_list.append(gti.modularity(g_multi, blocks))
 
     if return_state:
-        return [modules_list, modularity_list, state_multi] 
+        return [modules_list, modularity_list, state_multi]
     else:
         return [modules_list, modularity_list]
 

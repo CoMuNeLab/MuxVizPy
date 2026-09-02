@@ -12,7 +12,7 @@ import graph_tool.spectral
 try:
     import torch
 except ImportError:
-    torch = None
+    torch = None  # type: ignore[assignment]
 
 # Categorical coupling is materialized explicitly in several temporary arrays.
 # Keep its entry count bounded before allocating those arrays.
@@ -79,12 +79,12 @@ def build_interlayer_coupling_from_tensor(t: torch.Tensor, omega: float, kind: s
         to_indices[:, 1] += 1
 
         # Stack both directions
-        indices = np.concatenate([
+        coords = np.concatenate([
             np.stack([from_indices[:, 0], from_indices[:, 1], to_indices[:, 0], to_indices[:, 1]], axis=1),
             np.stack([to_indices[:, 0], to_indices[:, 1], from_indices[:, 0], from_indices[:, 1]], axis=1)
         ], axis=0)
 
-        indices = torch.tensor(indices, dtype=torch.long).t().contiguous()
+        indices = torch.tensor(coords, dtype=torch.long).t().contiguous()
         values = torch.full((indices.shape[1],), omega, dtype=torch.float32)
 
     elif kind == "categorical":
@@ -108,8 +108,8 @@ def build_interlayer_coupling_from_tensor(t: torch.Tensor, omega: float, kind: s
         all_lf = np.tile(lf, n)
         all_lt = np.tile(lt, n)
 
-        indices = np.stack([all_nodes, all_lf, all_nodes, all_lt], axis=1)
-        indices = torch.tensor(indices, dtype=torch.long).t().contiguous()
+        coords = np.stack([all_nodes, all_lf, all_nodes, all_lt], axis=1)
+        indices = torch.tensor(coords, dtype=torch.long).t().contiguous()
         values = torch.full((indices.shape[1],), omega, dtype=torch.float32)
     
     elif kind == "temporal":
@@ -121,9 +121,9 @@ def build_interlayer_coupling_from_tensor(t: torch.Tensor, omega: float, kind: s
         to_indices = from_indices.copy()
         to_indices[:, 1] += 1
 
-        indices = np.stack([from_indices[:, 0], from_indices[:, 1], to_indices[:, 0], to_indices[:, 1]], axis=1)
+        coords = np.stack([from_indices[:, 0], from_indices[:, 1], to_indices[:, 0], to_indices[:, 1]], axis=1)
 
-        indices = torch.tensor(indices, dtype=torch.long).t().contiguous()
+        indices = torch.tensor(coords, dtype=torch.long).t().contiguous()
         values = torch.full((indices.shape[1],), omega, dtype=torch.float32)
 
     t_coupling = torch.sparse_coo_tensor(

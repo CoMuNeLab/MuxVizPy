@@ -323,6 +323,10 @@ class TestDecompositionHelpers:
         with pytest.raises(ValueError, match="Unknown initialization"):
             _initialize_factors((4, 2, 4, 2), 3, "invalid", None, backend)
 
+    def test_initialize_factors_hosvd_without_tensor_data_raises(self, backend):
+        with pytest.raises(ValueError, match="requires coords and values"):
+            _initialize_factors((4, 2, 4, 2), 3, "hosvd", None, backend)
+
     def test_compute_recon_error_perfect(self, backend):
         """A one-coordinate CP model exactly reconstructs a sparse tensor."""
         factors = [

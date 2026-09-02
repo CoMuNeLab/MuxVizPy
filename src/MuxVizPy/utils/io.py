@@ -8,7 +8,7 @@ from pathlib import Path
 try:
     import torch
 except ImportError:
-    torch = None
+    torch = None  # type: ignore[assignment]
 
 
 def _require_torch():

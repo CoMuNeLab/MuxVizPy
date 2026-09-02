@@ -9,7 +9,7 @@ import warnings
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
+    from numpy.typing import DTypeLike, NDArray
 
 _CUPY_INSTALL_MSG = """
 RAPIDS/CuPy requries NVIDIA GPU with CUDA drivers support.
@@ -41,7 +41,7 @@ class CPBackend(ABC):
         pass
 
     @abstractmethod
-    def zeros(self, shape: tuple[int, ...], dtype: np.dtype | None = None) -> NDArray:
+    def zeros(self, shape: tuple[int, ...], dtype: DTypeLike | None = None) -> NDArray:
         """Create an array of zeros with the given shape and dtype."""
         pass
 
@@ -98,14 +98,14 @@ class CPBackend(ABC):
         pass
 
     @abstractmethod
-    def normalize_factors(self, factors: list[NDArray], weights: NDArray) -> tuple[list[NDArray], NDArray]:
+    def normalize_factors(self, factors: list[NDArray], weights: NDArray | None = None) -> tuple[list[NDArray], NDArray]:
         """
         Normalize the factor matrices and adjust the component weights accordingly.
         Normalize each column of each factor to unit norm, accumulating the norms into a weight vector.
 
         Args:
             factors (list[NDArray]): List of factor matrices to be normalized (each of shape (dim, rank))
-            weights (NDArray): The component weights to be updated based on the norms (shape: rank) 
+            weights (NDArray | None): The component weights to be updated based on the norms (shape: rank). Defaults to ones when omitted.
         
         Return:
             tuple[list[NDArray], NDArray]: A tuple containing the list of normalized factor matrices and the updated weights.
@@ -163,7 +163,7 @@ class CPBackend(ABC):
     
     @abstractmethod
     def multiply_gather(
-            self, values: NDArray, indices: NDArray, factors: list[NDArray], exclude_mode: int
+            self, values: NDArray, indices: list[NDArray], factors: list[NDArray], exclude_mode: int
     ) -> NDArray:
         """
         Compute the Kathri-Rao product contribution for MTTKRP.
@@ -171,7 +171,7 @@ class CPBackend(ABC):
 
         Args:
             values (NDArray): Non-zero values of the tensor (shape: nvalues)
-            indices (NDArray): Corresponding indices for each non-zero value (shape: nvalues x 4)
+            indices (list[NDArray]): One coordinate array per mode, each of shape (nvalues,)
             factors (list[NDArray]): List of factor matrices (each of shape (dim, rank))
             exclude_mode (int): The mode to exclude from the product (0, 1, 2, or 3)
 
@@ -197,7 +197,7 @@ class NumPyBackend(CPBackend):
     def name(self) -> str:
         return "numpy"
 
-    def zeros(self, shape: tuple[int, ...], dtype: np.dtype | None = None) -> NDArray:
+    def zeros(self, shape: tuple[int, ...], dtype: DTypeLike | None = None) -> NDArray:
         if dtype is None:
             dtype = np.float64
         return np.zeros(shape, dtype=dtype)
@@ -231,7 +231,7 @@ class NumPyBackend(CPBackend):
             warnings.warn("Cholesky factorization failed, falling back to general least-squares solver. Consider increasing regularization.")
             return linalg.solve(reg_grams, rhs.T, assume_a="pos").T # still assume that the matrix is positive definite, but solve with a more robust method that can handle near-singularity better than cho_solve.
 
-    def normalize_factors(self, factors: list[NDArray], weights: NDArray) -> tuple[list[NDArray], NDArray]:
+    def normalize_factors(self, factors: list[NDArray], weights: NDArray | None = None) -> tuple[list[NDArray], NDArray]:
         rank = factors[0].shape[1]
         if weights is None:
             weights = np.ones(rank)
@@ -268,7 +268,7 @@ class NumPyBackend(CPBackend):
         return np.maximum(array, value)
 
     def compute_norm(self, array: NDArray) -> float:
-        return np.linalg.norm(array)
+        return float(np.linalg.norm(array))
 
     def random_init(self, shapes: list[tuple[int,int]], random_state: np.random.Generator | int | None = None) -> list[NDArray]:
         if random_state is None:
@@ -319,7 +319,7 @@ class RAPIDSBackend(CPBackend):
     def name(self) -> str:
         return "rapids"
     
-    def zeros(self, shape: tuple[int, ...], dtype: np.dtype | None = None) -> NDArray:
+    def zeros(self, shape: tuple[int, ...], dtype: DTypeLike | None = None) -> NDArray:
         if dtype is None:
             dtype = np.float64
         return self._cp.zeros(shape, dtype=dtype)
@@ -382,7 +382,7 @@ class RAPIDSBackend(CPBackend):
             weights *= norms
         return normalized, weights
 
-    def random_init(self, shapes: list[tuple[int, int]], random_state: int | None = None) -> list[NDArray]:
+    def random_init(self, shapes: list[tuple[int, int]], random_state: np.random.Generator | int | None = None) -> list[NDArray]:
         cp = self._cp
         # Use isolated RandomState to avoid affecting global state
         if random_state is not None:
@@ -408,7 +408,7 @@ class RAPIDSBackend(CPBackend):
         return time.time()
 
     def multiply_gather(
-            self, values: NDArray, indices: NDArray, factors: list[NDArray], exclude_mode: int
+            self, values: NDArray, indices: list[NDArray], factors: list[NDArray], exclude_mode: int
     ) -> NDArray:
         cp = self._cp
         rank = factors[0].shape[1]

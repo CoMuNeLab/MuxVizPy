@@ -388,7 +388,7 @@ def compute_katz_centrality(
     tol: float = 1e-6,
     return_eigenvalue: bool = False,
     logger: Optional[logging.Logger] = None,
-) -> np.ndarray:
+) -> np.ndarray | tuple[np.ndarray, float]:
     """
     Compute multi-layer Katz centrality.
 
@@ -767,10 +767,10 @@ def compute_multi_hub_centrality(
         return np.empty(0, dtype=np.float32)
 
     AA = adj.dot(adj.T)
-    if approx and approx_args is None:
-        approx_args = {"maxiter": 1000, "tol": 1e-6}
 
     if approx:
+        if approx_args is None:
+            approx_args = {"maxiter": 1000, "tol": 1e-6}
         if logger:
             logger.debug("Using approximate largest eigenvalue computation for hub centrality")
         eigenval, eigenvec = approximate_largest_eigenvalue(
@@ -844,10 +844,10 @@ def compute_multi_authority_centrality(
         return np.empty(0, dtype=np.float32)
 
     AAT = adj.T.dot(adj).astype(np.float64)
-    if approx and approx_args is None:
-        approx_args = {"maxiter": 1000, "tol": 1e-6}
 
     if approx:
+        if approx_args is None:
+            approx_args = {"maxiter": 1000, "tol": 1e-6}
         if logger:
             logger.debug("Using approximate largest eigenvalue computation for authority centrality")
         eigenval, eigenvec = approximate_largest_eigenvalue(

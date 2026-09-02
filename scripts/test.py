@@ -41,7 +41,11 @@ def main() -> None:
         coupling,
         num_nodes,
     )
-    degree = versatility.get_multi_degree(supra, num_layers, num_nodes)
+    degree = versatility.get_multi_degree(
+        supra,
+        nodes=num_nodes,
+        layers=num_layers,
+    )
 
     print(f"nodes={num_nodes}, layers={num_layers}")
     print(f"aggregated degree={degree.tolist()}")

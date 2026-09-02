@@ -53,26 +53,26 @@ class TestVersatilityCorrectness:
     # --- block accumulation helpers ---------------------------------------
 
     def test_is_in_diagonal_block(self):
-        assert versatility.is_in_diagonal_block(0, 1, n=10, l=3) is True
-        assert versatility.is_in_diagonal_block(0, 10, n=10, l=3) is False
-        assert versatility.is_in_diagonal_block(15, 19, n=10, l=3) is True
+        assert versatility.is_in_diagonal_block(0, 1, nodes=10, layers=3) is True
+        assert versatility.is_in_diagonal_block(0, 10, nodes=10, layers=3) is False
+        assert versatility.is_in_diagonal_block(15, 19, nodes=10, layers=3) is True
 
     def test_accumulate_diagonal_blocks_shape(self, net_adjacency, net_n, net_l):
         result = versatility._accumulate_on_diagonal_blocks(
-            net_adjacency, net_n, net_l, is_out_of_diagonal=False,
+            net_adjacency, nodes=net_n, layers=net_l, is_out_of_diagonal=False,
         )
         assert result.shape == (net_n, net_l)
 
     def test_accumulate_off_diagonal_blocks_shape(self, net_adjacency, net_n, net_l):
         result = versatility._accumulate_on_diagonal_blocks(
-            net_adjacency, net_n, net_l, is_out_of_diagonal=True,
+            net_adjacency, nodes=net_n, layers=net_l, is_out_of_diagonal=True,
         )
         assert result.shape == (net_n, net_l)
 
     def test_accumulate_wrong_shape_raises(self, net_n, net_l):
         wrong = sp.eye(5, format="csr")
         with pytest.raises(ValueError, match="does not match"):
-            versatility._accumulate_on_diagonal_blocks(wrong, net_n, net_l, is_out_of_diagonal=False)
+            versatility._accumulate_on_diagonal_blocks(wrong, nodes=net_n, layers=net_l, is_out_of_diagonal=False)
 
     # --- aggregate_metrics_over_layers ------------------------------------
 
@@ -100,57 +100,57 @@ class TestVersatilityCorrectness:
     # --- per-layer degree / strength shapes -------------------------------
 
     def test_compute_indegree_shape(self, net_adjacency, net_n, net_l):
-        result = versatility.compute_indegree(net_adjacency, net_n, net_l)
+        result = versatility.compute_indegree(net_adjacency, nodes=net_n, layers=net_l)
         assert result.shape == (net_n, net_l)
 
     def test_compute_aggregated_indegree_shape(self, net_adjacency, net_n, net_l):
-        result = versatility.compute_aggregated_indegree(net_adjacency, net_n, net_l)
+        result = versatility.compute_aggregated_indegree(net_adjacency, nodes=net_n, layers=net_l)
         assert result.shape == (net_n,)
 
     def test_compute_outdegree_shape(self, net_adjacency, net_n, net_l):
-        result = versatility.compute_outdegree(net_adjacency, net_n, net_l)
+        result = versatility.compute_outdegree(net_adjacency, nodes=net_n, layers=net_l)
         assert result.shape == (net_n, net_l)
 
     def test_compute_aggregated_outdegree_shape(self, net_adjacency, net_n, net_l):
-        result = versatility.compute_aggregated_outdegree(net_adjacency, net_n, net_l)
+        result = versatility.compute_aggregated_outdegree(net_adjacency, nodes=net_n, layers=net_l)
         assert result.shape == (net_n,)
 
     def test_compute_instrength_shape(self, net_interaction, net_n, net_l):
-        result = versatility.compute_instrength(net_interaction, net_n, net_l)
+        result = versatility.compute_instrength(net_interaction, nodes=net_n, layers=net_l)
         assert result.shape == (net_n, net_l)
 
     def test_compute_outstrength_shape(self, net_interaction, net_n, net_l):
-        result = versatility.compute_outstrength(net_interaction, net_n, net_l)
+        result = versatility.compute_outstrength(net_interaction, nodes=net_n, layers=net_l)
         assert result.shape == (net_n, net_l)
 
     def test_compute_multiindegree_shape(self, net_adjacency, net_n, net_l):
-        result = versatility.compute_multiindegree(net_adjacency, net_n, net_l)
+        result = versatility.compute_multiindegree(net_adjacency, nodes=net_n, layers=net_l)
         assert result.shape == (net_n, net_l)
 
     def test_compute_multioutdegree_shape(self, net_adjacency, net_n, net_l):
-        result = versatility.compute_multioutdegree(net_adjacency, net_n, net_l)
+        result = versatility.compute_multioutdegree(net_adjacency, nodes=net_n, layers=net_l)
         assert result.shape == (net_n, net_l)
 
     def test_compute_multiinstrength_shape(self, net_interaction, net_n, net_l):
-        result = versatility.compute_multiinstrength(net_interaction, net_n, net_l)
+        result = versatility.compute_multiinstrength(net_interaction, nodes=net_n, layers=net_l)
         assert result.shape == (net_n, net_l)
 
     def test_compute_multioutstrength_shape(self, net_interaction, net_n, net_l):
-        result = versatility.compute_multioutstrength(net_interaction, net_n, net_l)
+        result = versatility.compute_multioutstrength(net_interaction, nodes=net_n, layers=net_l)
         assert result.shape == (net_n, net_l)
 
     # --- degree consistency: aggregated indegreesum = indegree + multiindegree
 
     def test_indegree_plus_multiindegree_equals_total(self, net_adjacency, net_n, net_l):
-        intra = versatility.compute_aggregated_indegree(net_adjacency, net_n, net_l)
-        inter = versatility.compute_aggregated_multiindegree(net_adjacency, net_n, net_l)
+        intra = versatility.compute_aggregated_indegree(net_adjacency, nodes=net_n, layers=net_l)
+        inter = versatility.compute_aggregated_multiindegree(net_adjacency, nodes=net_n, layers=net_l)
         total = np.asarray(net_adjacency.sum(axis=0)).ravel()
         total_per_node = total.reshape(net_l, net_n).sum(axis=0)
         np.testing.assert_allclose(intra + inter, total_per_node, atol=1e-10)
 
     def test_outdegree_plus_multioutdegree_equals_total(self, net_adjacency, net_n, net_l):
-        intra = versatility.compute_aggregated_outdegree(net_adjacency, net_n, net_l)
-        inter = versatility.compute_aggregated_multioutdegree(net_adjacency, net_n, net_l)
+        intra = versatility.compute_aggregated_outdegree(net_adjacency, nodes=net_n, layers=net_l)
+        inter = versatility.compute_aggregated_multioutdegree(net_adjacency, nodes=net_n, layers=net_l)
         total = np.asarray(net_adjacency.sum(axis=1)).ravel()
         total_per_node = total.reshape(net_l, net_n).sum(axis=0)
         np.testing.assert_allclose(intra + inter, total_per_node, atol=1e-10)
@@ -158,13 +158,13 @@ class TestVersatilityCorrectness:
     # --- centrality shapes and ranges -------------------------------------
 
     def test_compute_eigenvector_centrality_shape(self, net_adjacency, net_n, net_l):
-        ec = versatility.compute_eigenvector_centrality(net_adjacency, net_n, net_l)
+        ec = versatility.compute_eigenvector_centrality(net_adjacency, nodes=net_n, layers=net_l)
         assert ec.shape == (net_n,)
         assert ec.max() == pytest.approx(1.0, abs=1e-6)
 
     def test_compute_katz_centrality_exact_shape(self, net_interaction, net_n, net_l):
         katz, eigenvalue = versatility.compute_katz_centrality(
-            net_interaction, net_n, net_l, solver="direct", return_eigenvalue=True,
+            net_interaction, nodes=net_n, layers=net_l, solver="direct", return_eigenvalue=True,
         )
         assert katz.shape == (net_n,)
         assert katz.max() == pytest.approx(1.0, abs=1e-6)
@@ -173,7 +173,7 @@ class TestVersatilityCorrectness:
     def test_compute_katz_centrality_neumann_shape(self, net_interaction, net_n, net_l):
         np.random.seed(42)
         katz, eigenvalue = versatility.compute_katz_centrality(
-            net_interaction, net_n, net_l, solver="neumann",
+            net_interaction, nodes=net_n, layers=net_l, solver="neumann",
             maxiter=100000, tol=1e-4,
             return_eigenvalue=True,
         )
@@ -182,36 +182,36 @@ class TestVersatilityCorrectness:
         assert isinstance(eigenvalue, float)
 
     def test_compute_multi_rw_centrality_classical_shape(self, net_adjacency, net_n, net_l):
-        rc = versatility.compute_multi_rw_centrality(net_adjacency, net_n, net_l, kind="classical")
+        rc = versatility.compute_multi_rw_centrality(net_adjacency, nodes=net_n, layers=net_l, kind="classical")
         assert rc.shape == (net_n,)
         assert rc.max() == pytest.approx(1.0, abs=1e-6)
 
     def test_compute_multi_rw_centrality_pagerank_shape(self, net_adjacency, net_n, net_l):
-        pr = versatility.compute_multi_rw_centrality(net_adjacency, net_n, net_l, kind="pagerank")
+        pr = versatility.compute_multi_rw_centrality(net_adjacency, nodes=net_n, layers=net_l, kind="pagerank")
         assert pr.shape == (net_n,)
         assert pr.max() == pytest.approx(1.0, abs=1e-6)
 
     def test_compute_multipagerank_centrality_shape(self, net_adjacency, net_n, net_l):
-        pr = versatility.compute_multipagerank_centrality(net_adjacency, net_n, net_l)
+        pr = versatility.compute_multipagerank_centrality(net_adjacency, nodes=net_n, layers=net_l)
         assert pr.shape == (net_n,)
         assert pr.max() == pytest.approx(1.0, abs=1e-6)
 
     def test_multipagerank_wrapper_matches_direct(self, net_adjacency, net_n, net_l):
         """compute_multipagerank_centrality is a wrapper and must match compute_multi_rw_centrality(kind='pagerank')."""
-        direct = versatility.compute_multi_rw_centrality(net_adjacency, net_n, net_l, kind="pagerank")
-        wrapper = versatility.compute_multipagerank_centrality(net_adjacency, net_n, net_l)
+        direct = versatility.compute_multi_rw_centrality(net_adjacency, nodes=net_n, layers=net_l, kind="pagerank")
+        wrapper = versatility.compute_multipagerank_centrality(net_adjacency, nodes=net_n, layers=net_l)
         np.testing.assert_array_equal(direct, wrapper)
 
     def test_compute_multi_rw_centrality_unknown_kind_raises(self, net_adjacency, net_n, net_l):
         with pytest.raises(ValueError, match="Unknown RW kind"):
-            versatility.compute_multi_rw_centrality(net_adjacency, net_n, net_l, kind="bogus")
+            versatility.compute_multi_rw_centrality(net_adjacency, nodes=net_n, layers=net_l, kind="bogus")
 
     def test_compute_multi_hub_centrality_shape(self, net_adjacency, net_n, net_l):
-        hc = versatility.compute_multi_hub_centrality(net_adjacency, net_n, net_l)
+        hc = versatility.compute_multi_hub_centrality(net_adjacency, nodes=net_n, layers=net_l)
         assert hc.shape == (net_n,)
 
     def test_compute_multi_authority_centrality_shape(self, net_interaction, net_n, net_l):
-        ac = versatility.compute_multi_authority_centrality(net_interaction, net_n, net_l)
+        ac = versatility.compute_multi_authority_centrality(net_interaction, nodes=net_n, layers=net_l)
         assert ac.shape == (net_n,)
 
     # --- public API shapes ------------------------------------------------
@@ -221,7 +221,7 @@ class TestVersatilityCorrectness:
         assert deg.shape == (net_n,)
 
     def test_compute_eigenvector_centrality_public_shape(self, net_adjacency, net_n, net_l):
-        ec = versatility.compute_eigenvector_centrality(net_adjacency, net_n, net_l)
+        ec = versatility.compute_eigenvector_centrality(net_adjacency, nodes=net_n, layers=net_l)
         assert ec.shape == (net_n,)
 
 
@@ -235,32 +235,32 @@ class TestKatzCentralityAgreement:
     def test_katz_invalid_solver_raises(self, net_interaction, net_n, net_l):
         with pytest.raises(ValueError, match="Unknown solver"):
             versatility.compute_katz_centrality(
-                net_interaction, net_n, net_l, solver="invalid_solver",
+                net_interaction, nodes=net_n, layers=net_l, solver="invalid_solver",
             )
 
     def test_katz_neumann_warns_when_not_converged(self, net_interaction, net_n, net_l):
         with pytest.warns(UserWarning, match="did not converge"):
             versatility.compute_katz_centrality(
-                net_interaction, net_n, net_l, solver="neumann",
+                net_interaction, nodes=net_n, layers=net_l, solver="neumann",
                 maxiter=1, tol=1e-10,
             )
 
     def test_katz_gmres_matches_direct(self, net_interaction, net_n, net_l):
         exact = versatility.compute_katz_centrality(
-            net_interaction, net_n, net_l, solver="direct",
+            net_interaction, nodes=net_n, layers=net_l, solver="direct",
         )
         gmres_result = versatility.compute_katz_centrality(
-            net_interaction, net_n, net_l, solver="gmres",
+            net_interaction, nodes=net_n, layers=net_l, solver="gmres",
             maxiter=1000, tol=1e-8,
         )
         np.testing.assert_allclose(gmres_result, exact, atol=1e-3)
 
     def test_katz_bicgstab_matches_direct(self, net_interaction, net_n, net_l):
         exact = versatility.compute_katz_centrality(
-            net_interaction, net_n, net_l, solver="direct",
+            net_interaction, nodes=net_n, layers=net_l, solver="direct",
         )
         bicgstab_result = versatility.compute_katz_centrality(
-            net_interaction, net_n, net_l, solver="bicgstab",
+            net_interaction, nodes=net_n, layers=net_l, solver="bicgstab",
             maxiter=1000, tol=1e-8,
         )
         np.testing.assert_allclose(bicgstab_result, exact, atol=5e-4)
@@ -302,7 +302,7 @@ class TestCentralityEdgeCases:
 
         with pytest.raises(ValueError, match="alpha"):
             versatility.compute_multi_rw_centrality(
-                adjacency, n=3, l=1, kind="pagerank", alpha=alpha
+                adjacency, nodes=3, layers=1, kind="pagerank", alpha=alpha
             )
 
     @pytest.mark.parametrize(
@@ -317,7 +317,7 @@ class TestCentralityEdgeCases:
 
         with pytest.raises(ValueError, match=parameter):
             versatility.compute_multi_rw_centrality(
-                adjacency, n=3, l=1, kind="pagerank", **kwargs
+                adjacency, nodes=3, layers=1, kind="pagerank", **kwargs
             )
 
     def test_pagerank_raises_when_iteration_does_not_converge(self):
@@ -328,8 +328,8 @@ class TestCentralityEdgeCases:
         with pytest.raises(RuntimeError, match="converge"):
             versatility.compute_multi_rw_centrality(
                 adjacency,
-                n=3,
-                l=1,
+                nodes=3,
+                layers=1,
                 kind="pagerank",
                 tol=1e-16,
                 max_iter=1,
@@ -337,7 +337,7 @@ class TestCentralityEdgeCases:
 
     def test_pagerank_empty_network_returns_empty_result(self):
         result = versatility.compute_multi_rw_centrality(
-            sp.csr_matrix((0, 0)), n=0, l=1, kind="pagerank"
+            sp.csr_matrix((0, 0)), nodes=0, layers=1, kind="pagerank"
         )
 
         assert result.shape == (0,)
@@ -351,7 +351,7 @@ class TestCentralityEdgeCases:
         )
 
         results = [
-            versatility.compute_eigenvector_centrality(adjacency, n=4, l=1)
+            versatility.compute_eigenvector_centrality(adjacency, nodes=4, layers=1)
             for _ in range(3)
         ]
 
@@ -373,7 +373,7 @@ class TestCentralityEdgeCases:
 
         results = [
             versatility.compute_multi_rw_centrality(
-                adjacency, n=4, l=1, kind="classical"
+                adjacency, nodes=4, layers=1, kind="classical"
             )
             for _ in range(3)
         ]
@@ -386,14 +386,14 @@ class TestCentralityEdgeCases:
         adjacency = sp.csr_matrix((0, 0))
 
         results = [
-            versatility.compute_eigenvector_centrality(adjacency, n=0, l=1),
-            versatility.compute_katz_centrality(adjacency, n=0, l=1),
+            versatility.compute_eigenvector_centrality(adjacency, nodes=0, layers=1),
+            versatility.compute_katz_centrality(adjacency, nodes=0, layers=1),
             versatility.compute_multi_rw_centrality(
-                adjacency, n=0, l=1, kind="classical"
+                adjacency, nodes=0, layers=1, kind="classical"
             ),
-            versatility.compute_multi_hub_centrality(adjacency, n=0, l=1),
+            versatility.compute_multi_hub_centrality(adjacency, nodes=0, layers=1),
             versatility.compute_multi_authority_centrality(
-                adjacency, n=0, l=1
+                adjacency, nodes=0, layers=1
             ),
         ]
 
@@ -405,10 +405,10 @@ class TestCentralityEdgeCases:
         )
 
         first = versatility.compute_katz_centrality(
-            adjacency, n=10, l=1, alpha=0.5, solver="neumann"
+            adjacency, nodes=10, layers=1, alpha=0.5, solver="neumann"
         )
         second = versatility.compute_katz_centrality(
-            adjacency, n=10, l=1, alpha=0.5, solver="neumann"
+            adjacency, nodes=10, layers=1, alpha=0.5, solver="neumann"
         )
 
         assert np.all(first >= 0)
@@ -420,7 +420,7 @@ class TestCentralityEdgeCases:
 
         with pytest.raises(ValueError, match="alpha"):
             versatility.compute_katz_centrality(
-                adjacency, n=2, l=1, alpha=alpha
+                adjacency, nodes=2, layers=1, alpha=alpha
             )
 
     def test_exact_hits_balances_tied_components_deterministically(self):
@@ -433,12 +433,12 @@ class TestCentralityEdgeCases:
         )
 
         hub_results = [
-            versatility.compute_multi_hub_centrality(adjacency, n=8, l=1)
+            versatility.compute_multi_hub_centrality(adjacency, nodes=8, layers=1)
             for _ in range(3)
         ]
         authority_results = [
             versatility.compute_multi_authority_centrality(
-                adjacency, n=8, l=1
+                adjacency, nodes=8, layers=1
             )
             for _ in range(3)
         ]
@@ -543,7 +543,7 @@ class TestVersatilityReference:
 
     def test_katz_exact_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
         computed = versatility.compute_katz_centrality(
-            net_interaction, net_n, net_l, solver="direct", return_eigenvalue=False,
+            net_interaction, nodes=net_n, layers=net_l, solver="direct", return_eigenvalue=False,
         )
         # The Python and R eigensolvers differ slightly in their numerical results.
         compare_metrics(computed, net_muxviz_results["katz"], "Katz exact (vs muxViz R)",
@@ -552,7 +552,7 @@ class TestVersatilityReference:
     def test_katz_neumann_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
         np.random.seed(42)
         computed = versatility.compute_katz_centrality(
-            net_interaction, net_n, net_l, solver="neumann",
+            net_interaction, nodes=net_n, layers=net_l, solver="neumann",
             maxiter=100000, tol=1e-4,
             return_eigenvalue=False,
         )
@@ -560,56 +560,56 @@ class TestVersatilityReference:
                          rtol=0.05, atol=0.05)
 
     def test_pagerank_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
-        computed = versatility.compute_multipagerank_centrality(net_interaction, net_n, net_l)
+        computed = versatility.compute_multipagerank_centrality(net_interaction, nodes=net_n, layers=net_l)
         compare_metrics(computed, net_muxviz_results["pagerank"], "PageRank (vs muxViz R)")
 
     def test_hub_exact_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
-        computed = versatility.compute_multi_hub_centrality(net_adjacency, net_n, net_l)
+        computed = versatility.compute_multi_hub_centrality(net_adjacency, nodes=net_n, layers=net_l)
         compare_metrics(computed, net_muxviz_results["hub"], "Hub (vs muxViz R)")
 
     def test_hub_approx_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
         np.random.seed(42)
         computed = versatility.compute_multi_hub_centrality(
-            net_adjacency, net_n, net_l, approx=True,
+            net_adjacency, nodes=net_n, layers=net_l, approx=True,
             approx_args={"maxiter": 10000, "tol": 1e-10},
         )
         compare_metrics(computed, net_muxviz_results["hub"], "Hub approx (vs muxViz R)",
                         rtol=0.05, atol=0.05)
 
     def test_auth_exact_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
-        computed = versatility.compute_multi_authority_centrality(net_interaction, net_n, net_l)
+        computed = versatility.compute_multi_authority_centrality(net_interaction, nodes=net_n, layers=net_l)
         compare_metrics(computed, net_muxviz_results["auth"], "Authority (vs muxViz R)")
 
     def test_auth_approx_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
         np.random.seed(42)
         computed = versatility.compute_multi_authority_centrality(
-            net_interaction, net_n, net_l, approx=True,
+            net_interaction, nodes=net_n, layers=net_l, approx=True,
             approx_args={"maxiter": 10000, "tol": 1e-10},
         )
         compare_metrics(computed, net_muxviz_results["auth"], "Authority approx (vs muxViz R)",
                         rtol=0.05, atol=0.05)
 
     def test_eigenvector_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
-        computed = versatility.compute_eigenvector_centrality(net_interaction, net_n, net_l)
+        computed = versatility.compute_eigenvector_centrality(net_interaction, nodes=net_n, layers=net_l)
         compare_metrics(computed, net_muxviz_results["eigenvector"], "Eigenvector (vs muxViz R)",
                         rtol=5e-4, atol=5e-4)
 
     # --- degree / strength reference tests --------------------------------
 
     def test_indegree_sum_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
-        computed = versatility.compute_aggregated_indegree(net_adjacency, net_n, net_l)
+        computed = versatility.compute_aggregated_indegree(net_adjacency, nodes=net_n, layers=net_l)
         compare_metrics(computed, net_muxviz_results["indegree"], "Indegree (vs muxViz R)")
 
     def test_outdegree_sum_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
-        computed = versatility.compute_aggregated_outdegree(net_adjacency, net_n, net_l)
+        computed = versatility.compute_aggregated_outdegree(net_adjacency, nodes=net_n, layers=net_l)
         compare_metrics(computed, net_muxviz_results["outdegree"], "Outdegree (vs muxViz R)")
 
     def test_instrength_sum_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
-        computed = versatility.compute_aggregated_instrength(net_interaction, net_n, net_l)
+        computed = versatility.compute_aggregated_instrength(net_interaction, nodes=net_n, layers=net_l)
         compare_metrics(computed, net_muxviz_results["instrength"], "Instrength (vs muxViz R)")
 
     def test_outstrength_sum_vs_muxviz(self, net_interaction, net_n, net_l, net_muxviz_results):
-        computed = versatility.compute_aggregated_outstrength(net_interaction, net_n, net_l)
+        computed = versatility.compute_aggregated_outstrength(net_interaction, nodes=net_n, layers=net_l)
         compare_metrics(computed, net_muxviz_results["outstrength"], "Outstrength (vs muxViz R)")
 
     # --- multi-degree derived tests (indegreesum - indegree = multiindegree)
@@ -617,28 +617,28 @@ class TestVersatilityReference:
     def test_multiindegree_vs_muxviz_derived(self, net_adjacency, net_n, net_l, net_muxviz_results):
         if "indegreesum" not in net_muxviz_results:
             pytest.skip("indegreesum not in reference results")
-        computed = versatility.compute_aggregated_multiindegree(net_adjacency, net_n, net_l)
+        computed = versatility.compute_aggregated_multiindegree(net_adjacency, nodes=net_n, layers=net_l)
         expected = np.array(net_muxviz_results["indegreesum"]) - np.array(net_muxviz_results["indegree"])
         compare_metrics(computed, expected, "MultiIndegree (vs muxViz derived)")
 
     def test_multioutdegree_vs_muxviz_derived(self, net_adjacency, net_n, net_l, net_muxviz_results):
         if "outdegreesum" not in net_muxviz_results:
             pytest.skip("outdegreesum not in reference results")
-        computed = versatility.compute_aggregated_multioutdegree(net_adjacency, net_n, net_l)
+        computed = versatility.compute_aggregated_multioutdegree(net_adjacency, nodes=net_n, layers=net_l)
         expected = np.array(net_muxviz_results["outdegreesum"]) - np.array(net_muxviz_results["outdegree"])
         compare_metrics(computed, expected, "MultiOutdegree (vs muxViz derived)")
 
     def test_multiinstrength_vs_muxviz_derived(self, net_interaction, net_n, net_l, net_muxviz_results):
         if "instrengthsum" not in net_muxviz_results:
             pytest.skip("instrengthsum not in reference results")
-        computed = versatility.compute_aggregated_multiinstrength(net_interaction, net_n, net_l)
+        computed = versatility.compute_aggregated_multiinstrength(net_interaction, nodes=net_n, layers=net_l)
         expected = np.array(net_muxviz_results["instrengthsum"]) - np.array(net_muxviz_results["instrength"])
         compare_metrics(computed, expected, "MultiInstrength (vs muxViz derived)")
 
     def test_multioutstrength_vs_muxviz_derived(self, net_interaction, net_n, net_l, net_muxviz_results):
         if "outstrengthsum" not in net_muxviz_results:
             pytest.skip("outstrengthsum not in reference results")
-        computed = versatility.compute_aggregated_multioutstrength(net_interaction, net_n, net_l)
+        computed = versatility.compute_aggregated_multioutstrength(net_interaction, nodes=net_n, layers=net_l)
         expected = np.array(net_muxviz_results["outstrengthsum"]) - np.array(net_muxviz_results["outstrength"])
         compare_metrics(computed, expected, "MultiOutstrength (vs muxViz derived)")
 
@@ -647,7 +647,7 @@ class TestVersatilityReference:
     def test_multi_degree_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
         """R GetMultiDegree = GetMultiInDegree + GetMultiOutDegree (directed)."""
         expected = np.array(net_muxviz_results["indegree"]) + np.array(net_muxviz_results["outdegree"])
-        computed = versatility.compute_multi_degree(net_adjacency, net_n, net_l, is_directed=True)
+        computed = versatility.compute_multi_degree(net_adjacency, nodes=net_n, layers=net_l, is_directed=True)
         compare_metrics(computed, expected, "MultiDegree (vs muxViz R derived)")
 
     def test_multi_degree_hornet_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):

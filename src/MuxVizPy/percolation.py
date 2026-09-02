@@ -10,8 +10,9 @@ from .utils.parsing import (
 
 def get_percolation(
     g_list: list[gt.Graph],
-    layers: int,
+    *,
     nodes: int,
+    layers: int,
     order: np.ndarray,
 ) -> dict[str, np.ndarray | float]:
     """
@@ -21,10 +22,10 @@ def get_percolation(
     ----------
     g_list : list of graph_tool.Graph
         List of graphs, one per layer of the multilayer network.
-    layers : int
-        Number of layers in the network.
     nodes : int
         Number of physical nodes (used for normalization).
+    layers : int
+        Number of layers in the network.
     order : np.ndarray
         Array specifying the order in which nodes are removed during percolation.
 

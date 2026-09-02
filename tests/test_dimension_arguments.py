@@ -1,30 +1,59 @@
-"""Node and layer counts must be passed by name.
+"""Node and layer counts must be passed by name, everywhere in the package.
 
 Both are plain integers, so a transposed positional call cannot be detected at
-runtime. These functions previously took them in the order (layers, nodes), which
-is the opposite of the rest of the package.
+runtime. Rather than list the functions or the modules, these tests state the rule
+and check it against whatever the package currently defines, so a new function that
+takes both counts positionally fails here rather than shipping.
 """
 
+import importlib
+import inspect
+
 import pytest
-import scipy.sparse as sp
 
-from MuxVizPy import topology, versatility
-from MuxVizPy.utils import parsing
+from MuxVizPy import _LAZY_MODULES
 
-SUPRA = sp.eye(4, format="csr")
-
-FUNCTIONS = [
-    topology.get_connected_components,
-    topology.get_multi_path_statistics,
-    topology.get_SP_similarity_matrix,
-    versatility.get_multi_degree,
-    versatility.get_multi_Kcore_centrality,
-    parsing.supra_adjacency_to_network_list,
-    parsing.build_tensor_from_supra_adjacency_matrix,
-]
+UTILS_MODULES = ["parsing", "io", "decomposition_utils", "katz_utils"]
 
 
-@pytest.mark.parametrize("function", FUNCTIONS, ids=lambda f: f.__name__)
-def test_dimensions_cannot_be_passed_positionally(function):
-    with pytest.raises(TypeError):
-        function(SUPRA, 2, 2)
+def analysis_modules():
+    names = [f"MuxVizPy.{n}" for n in _LAZY_MODULES if n != "utils"]
+    names += [f"MuxVizPy.utils.{n}" for n in UTILS_MODULES]
+    return [importlib.import_module(name) for name in names]
+
+
+MODULES = analysis_modules()
+
+
+def dimension_functions():
+    found = []
+    for module in MODULES:
+        for name, obj in vars(module).items():
+            if not inspect.isfunction(obj) or obj.__module__ != module.__name__:
+                continue
+            params = inspect.signature(obj).parameters
+            if "nodes" in params and "layers" in params:
+                found.append(pytest.param(obj, id=f"{module.__name__}.{name}"))
+    return found
+
+
+FUNCTIONS = dimension_functions()
+
+
+def test_the_package_defines_such_functions():
+    assert len(FUNCTIONS) > 40, "the discovery above found almost nothing"
+
+
+@pytest.mark.parametrize("function", FUNCTIONS)
+def test_both_counts_are_keyword_only(function):
+    params = inspect.signature(function).parameters
+    for name in ("nodes", "layers"):
+        assert params[name].kind is inspect.Parameter.KEYWORD_ONLY, (
+            f"{function.__name__} takes `{name}` positionally"
+        )
+
+
+@pytest.mark.parametrize("function", FUNCTIONS)
+def test_no_short_dimension_aliases_remain(function):
+    params = inspect.signature(function).parameters
+    assert "n" not in params and "l" not in params

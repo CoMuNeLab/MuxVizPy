@@ -206,7 +206,7 @@ class TestTransitionMatrix:
 
     def test_classical_row_stochastic(self, sample_adjacency, n_nodes, n_layers):
         T = parsing.build_transition_matrix_from_adjacency_matrix(
-            sample_adjacency, n_nodes, n_layers, kind="classical"
+            sample_adjacency, nodes=n_nodes, layers=n_layers, kind="classical"
         )
         row_sums = np.asarray(T.sum(axis=1)).ravel()
         # Rows with outgoing edges should sum to 1; zero-degree rows sum to 0
@@ -217,25 +217,25 @@ class TestTransitionMatrix:
 
     def test_classical_nonnegative(self, sample_adjacency, n_nodes, n_layers):
         T = parsing.build_transition_matrix_from_adjacency_matrix(
-            sample_adjacency, n_nodes, n_layers, kind="classical"
+            sample_adjacency, nodes=n_nodes, layers=n_layers, kind="classical"
         )
         assert T.min() >= 0.0
 
     def test_classical_shape(self, sample_adjacency, n_nodes, n_layers):
         T = parsing.build_transition_matrix_from_adjacency_matrix(
-            sample_adjacency, n_nodes, n_layers, kind="classical"
+            sample_adjacency, nodes=n_nodes, layers=n_layers, kind="classical"
         )
         assert T.shape == (NL, NL)
 
     def test_pagerank_shape(self, sample_adjacency, n_nodes, n_layers):
         T = parsing.build_transition_matrix_from_adjacency_matrix(
-            sample_adjacency, n_nodes, n_layers, kind="pagerank", alpha=0.85
+            sample_adjacency, nodes=n_nodes, layers=n_layers, kind="pagerank", alpha=0.85
         )
         assert T.shape == (NL, NL)
 
     def test_pagerank_nonnegative(self, sample_adjacency, n_nodes, n_layers):
         T = parsing.build_transition_matrix_from_adjacency_matrix(
-            sample_adjacency, n_nodes, n_layers, kind="pagerank", alpha=0.85
+            sample_adjacency, nodes=n_nodes, layers=n_layers, kind="pagerank", alpha=0.85
         )
         assert T.min() >= 0.0
 
@@ -244,10 +244,10 @@ class TestTransitionMatrix:
     ):
         alpha = 0.85
         T_class = parsing.build_transition_matrix_from_adjacency_matrix(
-            sample_adjacency, n_nodes, n_layers, kind="classical"
+            sample_adjacency, nodes=n_nodes, layers=n_layers, kind="classical"
         )
         T_pr = parsing.build_transition_matrix_from_adjacency_matrix(
-            sample_adjacency, n_nodes, n_layers, kind="pagerank", alpha=alpha
+            sample_adjacency, nodes=n_nodes, layers=n_layers, kind="pagerank", alpha=alpha
         )
 
         expected = alpha * T_class.toarray()
@@ -264,24 +264,24 @@ class TestTransitionMatrix:
     def test_pagerank_invalid_alpha_raises(self, sample_adjacency, n_nodes, n_layers):
         with pytest.raises(ValueError):
             parsing.build_transition_matrix_from_adjacency_matrix(
-                sample_adjacency, n_nodes, n_layers, kind="pagerank", alpha=0.0
+                sample_adjacency, nodes=n_nodes, layers=n_layers, kind="pagerank", alpha=0.0
             )
         with pytest.raises(ValueError):
             parsing.build_transition_matrix_from_adjacency_matrix(
-                sample_adjacency, n_nodes, n_layers, kind="pagerank", alpha=1.5
+                sample_adjacency, nodes=n_nodes, layers=n_layers, kind="pagerank", alpha=1.5
             )
 
     def test_unknown_kind_raises(self, sample_adjacency, n_nodes, n_layers):
         with pytest.raises(NotImplementedError):
             parsing.build_transition_matrix_from_adjacency_matrix(
-                sample_adjacency, n_nodes, n_layers, kind="bogus"
+                sample_adjacency, nodes=n_nodes, layers=n_layers, kind="bogus"
             )
 
     @pytest.mark.parametrize("kind", ["diffusive", "maxent", "physical", "relaxed-physical"])
     def test_unimplemented_kinds_raise(self, sample_adjacency, n_nodes, n_layers, kind):
         with pytest.raises(NotImplementedError):
             parsing.build_transition_matrix_from_adjacency_matrix(
-                sample_adjacency, n_nodes, n_layers, kind=kind
+                sample_adjacency, nodes=n_nodes, layers=n_layers, kind=kind
             )
 
 

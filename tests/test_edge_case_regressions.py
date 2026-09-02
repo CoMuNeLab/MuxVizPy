@@ -41,7 +41,7 @@ def test_two_layer_global_overlap_uses_both_layers_in_denominator():
     supra = sp.block_diag([layer0, layer1], format="csr")
 
     overlap = global_descriptors.compute_average_global_overlap(
-        supra, n=3, l=2
+        supra, nodes=3, layers=2
     )
 
     assert overlap == pytest.approx(1.0 / 3.0)
@@ -54,7 +54,7 @@ def test_eigenvector_centrality_supports_tiny_nonnegative_networks():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         centrality = versatility.compute_eigenvector_centrality(
-            adjacency, n=2, l=1
+            adjacency, nodes=2, layers=1
         )
 
     assert centrality.shape == (2,)
@@ -201,7 +201,7 @@ def test_empty_adjacency_has_zero_average_global_clustering():
     """An edgeless graph has a defined global clustering coefficient of zero."""
     result = (
         global_descriptors.compute_average_global_clustering_coefficient(
-            sp.csr_matrix((3, 3)), n=3, l=1
+            sp.csr_matrix((3, 3)), nodes=3, layers=1
         )
     )
 
@@ -432,8 +432,8 @@ def test_pagerank_rejects_an_invalid_damping_factor():
     with pytest.raises(ValueError, match="alpha"):
         versatility.compute_multi_rw_centrality(
             adjacency,
-            n=3,
-            l=1,
+            nodes=3,
+            layers=1,
             kind="pagerank",
             alpha=1.5,
         )
@@ -447,7 +447,7 @@ def test_katz_rejects_undefined_automatic_alpha_for_zero_spectral_radius():
 
     with pytest.raises(ValueError, match="spectral radius|alpha"):
         versatility.compute_katz_centrality(
-            adjacency, n=10, l=1, solver="direct"
+            adjacency, nodes=10, layers=1, solver="direct"
         )
 
 
@@ -467,10 +467,10 @@ def test_exact_hits_rejects_or_corrects_signed_dominant_vectors(monkeypatch):
     )
 
     hubs = versatility.compute_multi_hub_centrality(
-        adjacency, n=8, l=1, max_attempts=1
+        adjacency, nodes=8, layers=1, max_attempts=1
     )
     authorities = versatility.compute_multi_authority_centrality(
-        adjacency, n=8, l=1, max_attempts=1
+        adjacency, nodes=8, layers=1, max_attempts=1
     )
 
     assert np.all(hubs >= 0)

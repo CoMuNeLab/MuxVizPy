@@ -331,21 +331,22 @@ def build_tensor_from_list_of_graphs(
         if g.num_vertices() != num_nodes:
             raise ValueError("All graphs must have the same number of nodes.")
 
-    indices_list = []
-    values_list = []
+    # One block of COO arrays per layer, concatenated once. The loop is over
+    # layers, not over edges.
+    row_blocks: list[np.ndarray] = []
+    col_blocks: list[np.ndarray] = []
+    layer_blocks: list[np.ndarray] = []
+    value_blocks: list[np.ndarray] = []
     for layer_from, g in enumerate(glist):
-        adj = _adjacency_from_graph(g, weight)
-        adj = adj.tocoo()
-        for node_from, node_to, value in zip(
-            adj.row,
-            adj.col,
-            adj.data,
-            strict=True,
-        ):
-            indices_list.append([node_from, layer_from, node_to, layer_from])
-            values_list.append(float(value))
+        adj = _adjacency_from_graph(g, weight).tocoo()
+        if adj.nnz == 0:
+            continue
+        row_blocks.append(adj.row.astype(np.int64, copy=False))
+        col_blocks.append(adj.col.astype(np.int64, copy=False))
+        layer_blocks.append(np.full(adj.nnz, layer_from, dtype=np.int64))
+        value_blocks.append(adj.data.astype(np.float32, copy=False))
 
-    if not indices_list:
+    if not row_blocks:
         # No edges in any layer; return an empty sparse tensor
         return torch.sparse_coo_tensor(
             torch.empty((4, 0), dtype=torch.long),
@@ -355,8 +356,18 @@ def build_tensor_from_list_of_graphs(
             check_invariants=True,
         )
 
-    indices = torch.tensor(indices_list, dtype=torch.long).t().contiguous()
-    values = torch.tensor(values_list, dtype=torch.float32)
+    layer_ids = np.concatenate(layer_blocks)
+    indices = torch.from_numpy(
+        np.stack(
+            (
+                np.concatenate(row_blocks),
+                layer_ids,
+                np.concatenate(col_blocks),
+                layer_ids,
+            )
+        )
+    )
+    values = torch.from_numpy(np.concatenate(value_blocks))
 
     t = torch.sparse_coo_tensor(
         indices,
@@ -379,102 +390,61 @@ def _nonzero_tensor_entries(
     return tensor.indices()[:, mask], values[mask]
 
 
+def _group_reduce(
+    keys: np.ndarray, values: np.ndarray, kind: str
+) -> tuple[np.ndarray, np.ndarray]:
+    """Reduce ``values`` within runs of equal ``keys``.
+
+    Sorting and ``reduceat`` replace a per-entry dictionary. Returns the unique
+    keys and one reduced value each, in ascending key order.
+    """
+    order = np.argsort(keys, kind="stable")
+    keys, values = keys[order], values[order]
+    starts = np.flatnonzero(
+        np.concatenate(([True], keys[1:] != keys[:-1]))
+    )
+    reducer = np.maximum if kind == "max" else np.minimum
+    return keys[starts], reducer.reduceat(values, starts)
+
+
 def build_aggregate_network_from_tensor(t: torch.Tensor, kind="sum") -> sp.csr_matrix:
     """
     Build an aggregate network from a tensor of sparse interactions.
     Args:
         t: A sparse tensor of shape (num_nodes, num_layers, num_nodes, num_layers)
             representing the multi-layer network.
+        kind: How repeated node pairs are combined across layers, one of
+            "sum", "max" or "min".
     Returns:
         A sparse matrix of shape (num_nodes, num_nodes) representing the aggregate network.
     """
-
-    if kind == "sum":
-        # Sum over layers: A_agg[i, j] = sum_{k, l} t[i, k, j, l]
-        indices, values = _nonzero_tensor_entries(t)
-
-        # Create a dictionary to accumulate sums for each (i, j) pair
-        from collections import defaultdict
-        edge_dict = defaultdict(float)
-        for idx in range(indices.shape[1]):
-            i, k, j, l = indices[:, idx]
-            edge_dict[(i.item(), j.item())] += values[idx].item()
-
-        # Convert the dictionary back to COO format
-        row = []
-        col = []
-        data = []
-        for (i, j), weight in edge_dict.items():
-            row.append(i)
-            col.append(j)
-            data.append(weight)
-
-        num_nodes = t.shape[0]
-        matrix = sp.coo_matrix(
-            (data, (row, col)),
-            shape=(num_nodes, num_nodes),
-        ).tocsr()
-        matrix.eliminate_zeros()
-        return matrix
-    elif kind == "max":
-        # Max over layers: A_agg[i, j] = max_{k, l} t[i, k, j, l]
-        indices, values = _nonzero_tensor_entries(t)
-
-        # Create a dictionary to keep track of the max weight for each (i, j) pair
-        edge_dict = {}
-        for idx in range(indices.shape[1]):
-            i, k, j, l = indices[:, idx]
-            weight = values[idx].item()
-            if (i.item(), j.item()) not in edge_dict or weight > edge_dict[(i.item(), j.item())]:
-                edge_dict[(i.item(), j.item())] = weight
-
-        # Convert the dictionary back to COO format
-        row = []
-        col = []
-        data = []
-        for (i, j), weight in edge_dict.items():
-            row.append(i)
-            col.append(j)
-            data.append(weight)
-
-        num_nodes = t.shape[0]
-        matrix = sp.coo_matrix(
-            (data, (row, col)),
-            shape=(num_nodes, num_nodes),
-        ).tocsr()
-        matrix.eliminate_zeros()
-        return matrix
-    elif kind == "min":
-        # Min over layers: A_agg[i, j] = min_{k, l} t[i, k, j, l]
-        indices, values = _nonzero_tensor_entries(t)
-
-        # Create a dictionary to keep track of the min weight for each (i, j) pair
-        edge_dict = {}
-        for idx in range(indices.shape[1]):
-            i, k, j, l = indices[:, idx]
-            weight = values[idx].item()
-            if (i.item(), j.item()) not in edge_dict or weight < edge_dict[(i.item(), j.item())]:
-                edge_dict[(i.item(), j.item())] = weight
-
-        # Convert the dictionary back to COO format
-        row = []
-        col = []
-        data = []
-        for (i, j), weight in edge_dict.items():
-            row.append(i)
-            col.append(j)
-            data.append(weight)
-
-        num_nodes = t.shape[0]
-        matrix = sp.coo_matrix(
-            (data, (row, col)),
-            shape=(num_nodes, num_nodes),
-        ).tocsr()
-        matrix.eliminate_zeros()
-        return matrix
-    else:
+    if kind not in {"sum", "max", "min"}:
         raise ValueError(f"Unknown aggregation kind: {kind}")
-    
+
+    num_nodes = t.shape[0]
+    indices, values = _nonzero_tensor_entries(t)
+
+    if indices.shape[1] == 0:
+        return sp.csr_matrix((num_nodes, num_nodes))
+
+    # A_agg[i, j] combines t[i, k, j, l] over every (k, l) pair.
+    rows = indices[0].numpy().astype(np.int64, copy=False)
+    cols = indices[2].numpy().astype(np.int64, copy=False)
+    data = values.numpy().astype(np.float64, copy=False)
+
+    if kind != "sum":
+        # "sum" needs no grouping: COO to CSR adds duplicate coordinates.
+        unique, data = _group_reduce(rows * num_nodes + cols, data, kind)
+        rows, cols = np.divmod(unique, num_nodes)
+
+    matrix = sp.coo_matrix(
+        (data, (rows, cols)),
+        shape=(num_nodes, num_nodes),
+    ).tocsr()
+    matrix.eliminate_zeros()
+    return matrix
+
+
 def build_list_of_graphs_from_tensor(
     t: torch.Tensor,
     *,
@@ -510,58 +480,80 @@ def build_list_of_graphs_from_tensor(
     n, num_layers = t.shape[0], t.shape[1]
     indices, values = _nonzero_tensor_entries(t)
 
-    directed_edges: list[list[tuple[int, int, float]]] = [
-        [] for _ in range(num_layers)
-    ]
-    undirected_edges: list[dict[tuple[int, int], float]] = [
-        {} for _ in range(num_layers)
-    ]
+    coordinates = indices.numpy()
+    weights = values.numpy().astype(np.float64, copy=False)
 
-    for idx in range(indices.shape[1]):
-        node_from, layer_from, node_to, layer_to = (
-            int(value.item()) for value in indices[:, idx]
-        )
-        if layer_from != layer_to:
-            continue
-
-        edge_weight = float(values[idx].item())
-        if directed:
-            directed_edges[layer_from].append(
-                (node_from, node_to, edge_weight)
-            )
-            continue
-
-        edges = undirected_edges[layer_from]
-        edge = tuple(sorted((node_from, node_to)))
-        if edge in edges and not np.isclose(edges[edge], edge_weight):
-            raise ValueError(
-                "Reciprocal tensor entries must have equal weights when "
-                "building undirected graphs."
-            )
-        edges[edge] = edge_weight
+    # Cross-layer interactions have no place in a per-layer graph.
+    intra_layer = coordinates[1] == coordinates[3]
+    sources = coordinates[0][intra_layer]
+    targets = coordinates[2][intra_layer]
+    edge_layers = coordinates[1][intra_layer]
+    weights = weights[intra_layer]
 
     graphs: list[gt.Graph] = []
     for layer in range(num_layers):
+        selected = edge_layers == layer
+        layer_sources = sources[selected]
+        layer_targets = targets[selected]
+        layer_weights = weights[selected]
+
+        if not directed:
+            layer_sources, layer_targets, layer_weights = (
+                _collapse_reciprocal_edges(
+                    layer_sources, layer_targets, layer_weights, n
+                )
+            )
+
         graph = gt.Graph(directed=directed)
         graph.add_vertex(n)
         weight_property = graph.new_edge_property("double")
-
-        entries = (
-            directed_edges[layer]
-            if directed
-            else [
-                (source, target, weight)
-                for (source, target), weight in undirected_edges[layer].items()
-            ]
-        )
-        for source, target, edge_weight in entries:
-            edge = graph.add_edge(source, target)
-            weight_property[edge] = edge_weight
+        if layer_sources.size:
+            graph.add_edge_list(
+                np.column_stack((layer_sources, layer_targets, layer_weights)),
+                eprops=[weight_property],
+            )
 
         graph.ep["weight"] = weight_property
         graphs.append(graph)
 
     return graphs
+
+
+def _collapse_reciprocal_edges(
+    sources: np.ndarray,
+    targets: np.ndarray,
+    weights: np.ndarray,
+    nodes: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Merge each reciprocal pair into one undirected edge.
+
+    Tensor coordinates store both directions, so an undirected graph must keep
+    one. The two stored weights have to agree, otherwise the intended undirected
+    weight is ambiguous.
+    """
+    if sources.size == 0:
+        return sources, targets, weights
+
+    low = np.minimum(sources, targets).astype(np.int64, copy=False)
+    high = np.maximum(sources, targets).astype(np.int64, copy=False)
+    keys = low * nodes + high
+
+    order = np.argsort(keys, kind="stable")
+    keys, weights = keys[order], weights[order]
+    starts = np.flatnonzero(
+        np.concatenate(([True], keys[1:] != keys[:-1]))
+    )
+
+    highest = np.maximum.reduceat(weights, starts)
+    lowest = np.minimum.reduceat(weights, starts)
+    if not np.allclose(highest, lowest):
+        raise ValueError(
+            "Reciprocal tensor entries must have equal weights when "
+            "building undirected graphs."
+        )
+
+    unique = keys[starts]
+    return unique // nodes, unique % nodes, weights[starts]
 
 def build_laplacian_from_tensor(t: torch.Tensor) -> torch.Tensor:
     """
@@ -583,40 +575,7 @@ def build_laplacian_from_tensor(t: torch.Tensor) -> torch.Tensor:
 
     indices, values = _nonzero_tensor_entries(t)
 
-    # Create a dictionary to accumulate the degree for each node-layer pair
-    degree_dict: dict[tuple[int, int], float] = {}
-    for idx in range(indices.shape[1]):
-        i, k, j, l_ = indices[:, idx]
-        weight = values[idx].item()
-        degree_dict[(i.item(), k.item())] = degree_dict.get((i.item(), k.item()), 0.0) + weight
-
-    # Create the Laplacian entries
-    laplacian_index_rows: list[list[int]] = []
-    laplacian_value_rows: list[float] = []
-    for idx in range(indices.shape[1]):
-        i, k, j, l_ = indices[:, idx]
-        weight = values[idx].item()
-        laplacian_index_rows.append(
-            [i.item(), k.item(), j.item(), l_.item()]
-        )
-        laplacian_value_rows.append(-weight)
-
-    for (i, k), degree in degree_dict.items():
-        laplacian_index_rows.append([i, k, i, k])
-        laplacian_value_rows.append(degree)
-
-    if laplacian_index_rows:
-        laplacian_indices = torch.tensor(
-            laplacian_index_rows,
-            dtype=torch.long,
-            device=t.device,
-        ).t().contiguous()
-        laplacian_values = torch.tensor(
-            laplacian_value_rows,
-            dtype=t.dtype,
-            device=t.device,
-        )
-    else:
+    if indices.shape[1] == 0:
         laplacian_indices = torch.empty(
             (4, 0),
             dtype=torch.long,
@@ -626,6 +585,37 @@ def build_laplacian_from_tensor(t: torch.Tensor) -> torch.Tensor:
             (0,),
             dtype=t.dtype,
             device=t.device,
+        )
+    else:
+        # Strength of each node-layer replica, accumulated in double precision
+        # to match the previous Python-float accumulation.
+        replica = indices[0] * l + indices[1]
+        strength = torch.zeros(n * l, dtype=torch.float64, device=t.device)
+        strength.index_add_(0, replica, values.to(torch.float64))
+
+        # A replica whose weights cancel to zero still carries a diagonal entry,
+        # so the occupied replicas come from the coordinates, not from a
+        # nonzero test on the strengths.
+        occupied = torch.unique(replica)
+        diagonal_node = occupied // l
+        diagonal_layer = occupied % l
+
+        laplacian_indices = torch.cat(
+            (
+                indices,
+                torch.stack(
+                    (
+                        diagonal_node,
+                        diagonal_layer,
+                        diagonal_node,
+                        diagonal_layer,
+                    )
+                ),
+            ),
+            dim=1,
+        )
+        laplacian_values = torch.cat(
+            (-values, strength[occupied].to(t.dtype))
         )
 
     laplacian = torch.sparse_coo_tensor(
@@ -965,9 +955,9 @@ def get_aggregate_network(
     if obj_type == "glist":
         obj = get_node_tensor_from_network_list(obj)
 
-    agg_mat = sp.csr_matrix(obj[0].shape)
-    for layer in obj:
-        agg_mat += layer
+    # Accumulate from the first layer rather than from a freshly allocated zero
+    # matrix, which cost one extra sparse addition per call.
+    agg_mat = sp.csr_matrix(sum(obj[1:], start=obj[0]))
     agg_mat.sum_duplicates()
     agg_mat.eliminate_zeros()
 

@@ -1,0 +1,57 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python 3.12
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash -el {0}
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v6
+
+      - name: Create the conda environment
+        uses: conda-incubator/setup-miniconda@v4
+        with:
+          miniforge-version: latest
+          activate-environment: muxvizpy
+          python-version: "3.12"
+          channels: conda-forge
+          channel-priority: strict
+          auto-activate: false
+
+      - name: Install graph-tool
+        run: conda install --yes graph-tool
+
+      - name: Install CPU-only torch
+        run: >-
+          python -m pip install torch
+          --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install MuxVizPy
+        run: python -m pip install --editable ".[dev]"
+
+      - name: Run the test suite
+        run: >-
+          python -m pytest -q -ra
+          --strict-config
+          --strict-markers
+          -o log_cli=false

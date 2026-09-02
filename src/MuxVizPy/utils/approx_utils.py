@@ -1,14 +1,8 @@
-import numpy as np
-import scipy as sp
-import scipy.sparse as sps
-from scipy.sparse import find, identity, coo_matrix
-import graph_tool as gt
-#from graph_tool import centrality, inference
-import graph_tool.correlations as gtcorr
-import graph_tool.clustering as gtclust
-
 import logging
-from typing import Optional, Union, List
+
+#from graph_tool import centrality, inference
+import numpy as np
+import scipy.sparse as sps
 
 
 def _prepare_eigen_matrix(adj: sps.spmatrix) -> sps.csr_matrix:
@@ -38,7 +32,7 @@ def _orient_eigenvector(vector: np.ndarray) -> np.ndarray:
 
 def get_largest_magnitude_eigenvalue(
     adj: sps.spmatrix,
-    logger: Optional[logging.Logger] = None,
+    logger: logging.Logger | None = None,
 ) -> tuple[float, np.ndarray]:
     """
     Compute the largest eigenvalue and corresponding eigenvector of a sparse matrix.
@@ -89,7 +83,7 @@ def get_largest_magnitude_eigenvalue(
 
 def get_largest_real_eigenvalue(
     adj: sps.spmatrix,
-    logger: Optional[logging.Logger] = None,
+    logger: logging.Logger | None = None,
 ) -> tuple[float, np.ndarray]:
     """
     Compute the largest eigenvalue and corresponding eigenvector of a sparse matrix.
@@ -169,7 +163,7 @@ def get_perron_eigenpair(
 
 def approximate_largest_eigenvalue(
     adj: sps.spmatrix, maxiter: int = 1000, tol: float = 1e-6,
-    cval: Optional[float] = None, alpha: float = 0.85,
+    cval: float | None = None, alpha: float = 0.85,
 ) -> tuple[float, np.ndarray]:
     """
     Approximate the largest eigenvalue using the power method with PageRank-style shift.
@@ -197,7 +191,7 @@ def approximate_largest_eigenvalue(
     if cval is None:
         cval = (1 - alpha) / n
 
-    for counter in range(maxiter):
+    for _ in range(maxiter):
         y = alpha * (adj @ x) + cval * np.ones_like(x) * x.sum()
         x_new = y / y.sum()
         delta = np.linalg.norm(x_new - x)
@@ -213,8 +207,8 @@ def approximate_largest_eigenvalue(
 
 
 def leading_eigenv_approx(
-    A: sps.spmatrix, max_iter: int = 1000, tol: float = 1e-6, cval: Optional[float] = None, alpha: float = 0.85
-) -> List[Union[float, np.ndarray]]:
+    A: sps.spmatrix, max_iter: int = 1000, tol: float = 1e-6, cval: float | None = None, alpha: float = 0.85
+) -> list[float | np.ndarray]:
     """
     Approximates the leading eigenvalue and eigenvector of a modified matrix C = A + B,
     where A is a sparse matrix and B is a constant matrix with entries cval.
@@ -242,11 +236,11 @@ def leading_eigenv_approx(
     # Initialize the starting vector x as a random vector
     n = A.shape[0]
     x = np.random.rand(n)
-    if cval==None:
+    if cval is None:
         cval = (1 - alpha) / n
 
     # Iterate until convergence
-    for i in range(max_iter):
+    for _ in range(max_iter):
         # Compute y = (alpha * A + cval) x
         y = alpha * (A @ x) + cval * np.ones(n) * x.sum()
 

@@ -1,19 +1,18 @@
-import numpy as np
-import scipy as sp
-import scipy.sparse as sps
-from scipy.sparse import find, identity, coo_matrix
-import graph_tool as gt
-import graph_tool.correlations as gtcorr
-import graph_tool.clustering as gtclust
 from functools import reduce
+
+import graph_tool as gt
+import graph_tool.topology
+import numpy as np
+import scipy.sparse as sps
 from tqdm import tqdm
 
-from .utils.parsing import get_aggregate_network
 from .utils.parsing import (
     _graph_from_sparse,
+    get_aggregate_network,
     get_node_tensor_from_network_list,
     supra_adjacency_to_network_list,
 )
+
 
 def get_multi_LCC(obj: list[gt.Graph] | list[sps.spmatrix], obj_type: str = "glist") -> np.ndarray:
     """
@@ -39,9 +38,9 @@ def get_multi_LCC(obj: list[gt.Graph] | list[sps.spmatrix], obj_type: str = "gli
     elif obj_type=="tensor":
         tensor = obj
     agg = get_aggregate_network(tensor)
-    
+
     lcc = gt.topology.extract_largest_component(agg).get_vertices()
-    
+
     return lcc
 
 def get_multi_LIC(obj: list[gt.Graph] | list[sps.spmatrix], obj_type: str = "glist") -> np.ndarray:
@@ -67,12 +66,12 @@ def get_multi_LIC(obj: list[gt.Graph] | list[sps.spmatrix], obj_type: str = "gli
         glist = obj
     elif obj_type=="tensor":
         glist = [_graph_from_sparse(adjacency) for adjacency in obj]
-        
+
     lcc_per_lay = [gt.topology.extract_largest_component(g).get_vertices() for g in glist]
     lcc_inters = reduce(np.intersect1d, lcc_per_lay)
-    
+
     return lcc_inters
-    
+
 def get_multi_LVC(g_list: list[gt.Graph], printt: bool = True) -> np.ndarray | list:
     """
     Return the largest versatile component (LVC) by iteratively pruning nodes
@@ -94,7 +93,6 @@ def get_multi_LVC(g_list: list[gt.Graph], printt: bool = True) -> np.ndarray | l
     g_l = [gt.Graph(g) for g in g_list]
     layers = len(g_l)
     lvc = None
-    flag_nochange = False
 
   #set node names, because we want to preserve labels while pruning later
     for l in range(layers):
@@ -105,18 +103,18 @@ def get_multi_LVC(g_list: list[gt.Graph], printt: bool = True) -> np.ndarray | l
     iteration = 0
     while True:
         iteration = iteration + 1
-        if printt: print(" LVC Iteration #", iteration, "...", "\n")
-        
+        if printt:
+            print(" LVC Iteration #", iteration, "...", "\n")
+
         #calculate the intersection of LCCs
         #print(g_l[0].num_vertices())
         lic = get_multi_LIC(g_l)
-        
+
         if len(lic)==0:
             return []
         else:
             if lvc is None:
                 lvc = lic
-                flag_nochange = False
             else:
                 if len(lic) == len(lvc):
                     if (np.all(np.sort(lic) == np.sort(lvc))):
@@ -295,7 +293,7 @@ def get_multi_path_statistics(supra: sps.spmatrix, layers: int, nodes: int) -> d
     return {"distance_matrix":DMIN,
             "avg_path_length":avg_path_length,
             "closeness":closeness}
-            
+
 def get_SP_similarity_matrix(supra: sps.spmatrix, layers: int, nodes: int) -> np.ndarray:
     """
     Compute a shortest-path-based pairwise similarity matrix between layers.

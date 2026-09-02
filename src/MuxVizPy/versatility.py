@@ -1,24 +1,21 @@
-import numpy as np
-import scipy as sp
-import scipy.sparse as sps
-import pandas as pd
-from scipy.sparse import find, identity, coo_matrix
-import graph_tool as gt
-from graph_tool import centrality #, inference
-import graph_tool.correlations as gtcorr
-import graph_tool.clustering as gtclust
 import logging
-from typing import Literal, Optional
+from typing import Literal
+
+import graph_tool as gt
+import graph_tool.topology
+import numpy as np
+import pandas as pd
+import scipy.sparse as sps
 
 from MuxVizPy.utils import approx_utils
+from MuxVizPy.utils import parsing as parsing_utils
 from MuxVizPy.utils.approx_utils import (
     approximate_largest_eigenvalue,
     get_largest_magnitude_eigenvalue,
     get_largest_real_eigenvalue,
     get_perron_eigenpair,
 )
-from MuxVizPy.utils import parsing as parsing_utils
-from MuxVizPy.utils.katz_utils import _katz_neumann, _katz_krylov, _VALID_SOLVERS
+from MuxVizPy.utils.katz_utils import _VALID_SOLVERS, _katz_krylov, _katz_neumann
 
 
 def get_largest_eigenvalue(
@@ -40,7 +37,7 @@ def is_in_diagonal_block(i: int, j: int, n: int, l: int) -> bool:
 
 def _accumulate_on_diagonal_blocks(
     adj: sps.csr_matrix, n: int, l: int,
-    is_out_of_diagonal: bool, weights: Optional[np.ndarray] = None,
+    is_out_of_diagonal: bool, weights: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Vectorized accumulation of weights on diagonal (or off-diagonal) blocks.
@@ -119,7 +116,7 @@ def aggregate_metrics_over_layers(metrics: np.ndarray, method: str = "sum") -> n
 # Per-layer degree / strength metrics (integrated from hornet/node_based)
 # ---------------------------------------------------------------------------
 
-def compute_indegree(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_indegree(adj: sps.csr_matrix, n: int, l: int, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute indegree of each node stratified by layer. Returns shape (n, l)."""
     if not sps.isspmatrix_csr(adj):
         adj = adj.tocsr(copy=False)
@@ -130,13 +127,13 @@ def compute_indegree(adj: sps.csr_matrix, n: int, l: int, logger: Optional[loggi
     return indegree
 
 
-def compute_aggregated_indegree(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_aggregated_indegree(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: logging.Logger | None = None) -> np.ndarray:
     """Compute aggregated indegree over layers. Returns shape (n,)."""
     indegree = compute_indegree(adj, n, l, logger=logger)
     return aggregate_metrics_over_layers(indegree, method=method)
 
 
-def compute_instrength(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_instrength(adj: sps.csr_matrix, n: int, l: int, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute instrength of each node stratified by layer. Returns shape (n, l)."""
     if not sps.isspmatrix_csr(adj):
         adj = adj.tocsr(copy=False)
@@ -147,13 +144,13 @@ def compute_instrength(adj: sps.csr_matrix, n: int, l: int, logger: Optional[log
     return instrength
 
 
-def compute_aggregated_instrength(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", *, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_aggregated_instrength(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", *, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute aggregated instrength over layers. Returns shape (n,)."""
     instrength = compute_instrength(adj, n, l, logger=logger)
     return aggregate_metrics_over_layers(instrength, method=method)
 
 
-def compute_outdegree(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_outdegree(adj: sps.csr_matrix, n: int, l: int, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute outdegree of each node stratified by layer. Returns shape (n, l)."""
     if not sps.isspmatrix_csr(adj):
         adj = adj.tocsr(copy=False)
@@ -164,13 +161,13 @@ def compute_outdegree(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logg
     return outdegree
 
 
-def compute_aggregated_outdegree(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", *, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_aggregated_outdegree(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", *, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute aggregated outdegree over layers. Returns shape (n,)."""
     outdegree = compute_outdegree(adj, n, l, logger=logger)
     return aggregate_metrics_over_layers(outdegree, method=method)
 
 
-def compute_outstrength(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_outstrength(adj: sps.csr_matrix, n: int, l: int, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute outstrength of each node stratified by layer. Returns shape (n, l)."""
     if not sps.isspmatrix_csr(adj):
         adj = adj.tocsr(copy=False)
@@ -181,13 +178,13 @@ def compute_outstrength(adj: sps.csr_matrix, n: int, l: int, logger: Optional[lo
     return outstrength
 
 
-def compute_aggregated_outstrength(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_aggregated_outstrength(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: logging.Logger | None = None) -> np.ndarray:
     """Compute aggregated outstrength over layers. Returns shape (n,)."""
     outstrength = compute_outstrength(adj, n, l, logger=logger)
     return aggregate_metrics_over_layers(outstrength, method=method)
 
 
-def compute_multiindegree(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_multiindegree(adj: sps.csr_matrix, n: int, l: int, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute multi-indegree (inter-layer blocks) stratified by layer. Returns shape (n, l)."""
     if not sps.isspmatrix_csr(adj):
         adj = adj.tocsr(copy=False)
@@ -195,12 +192,12 @@ def compute_multiindegree(adj: sps.csr_matrix, n: int, l: int, logger: Optional[
     return _accumulate_on_diagonal_blocks(adj, n, l, is_out_of_diagonal=True, weights=weights)
 
 
-def compute_aggregated_multiindegree(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_aggregated_multiindegree(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: logging.Logger | None = None) -> np.ndarray:
     """Compute aggregated multi-indegree over layers. Returns shape (n,)."""
     return aggregate_metrics_over_layers(compute_multiindegree(adj, n, l, logger=logger), method=method)
 
 
-def compute_multiinstrength(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_multiinstrength(adj: sps.csr_matrix, n: int, l: int, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute multi-instrength (inter-layer blocks) stratified by layer. Returns shape (n, l)."""
     if not sps.isspmatrix_csr(adj):
         adj = adj.tocsr(copy=False)
@@ -208,12 +205,12 @@ def compute_multiinstrength(adj: sps.csr_matrix, n: int, l: int, logger: Optiona
     return _accumulate_on_diagonal_blocks(adj, n, l, is_out_of_diagonal=True, weights=weights)
 
 
-def compute_aggregated_multiinstrength(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", *, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_aggregated_multiinstrength(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", *, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute aggregated multi-instrength over layers. Returns shape (n,)."""
     return aggregate_metrics_over_layers(compute_multiinstrength(adj, n, l, logger=logger), method=method)
 
 
-def compute_multioutdegree(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_multioutdegree(adj: sps.csr_matrix, n: int, l: int, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute multi-outdegree (inter-layer blocks) stratified by layer. Returns shape (n, l)."""
     if not sps.isspmatrix_csr(adj):
         adj = adj.tocsr(copy=False)
@@ -221,12 +218,12 @@ def compute_multioutdegree(adj: sps.csr_matrix, n: int, l: int, logger: Optional
     return _accumulate_on_diagonal_blocks(adj.T, n, l, is_out_of_diagonal=True, weights=weights)
 
 
-def compute_aggregated_multioutdegree(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_aggregated_multioutdegree(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: logging.Logger | None = None) -> np.ndarray:
     """Compute aggregated multi-outdegree over layers. Returns shape (n,)."""
     return aggregate_metrics_over_layers(compute_multioutdegree(adj, n, l, logger=logger), method=method)
 
 
-def compute_multioutstrength(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_multioutstrength(adj: sps.csr_matrix, n: int, l: int, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute multi-outstrength (inter-layer blocks) stratified by layer. Returns shape (n, l)."""
     if not sps.isspmatrix_csr(adj):
         adj = adj.tocsr(copy=False)
@@ -234,67 +231,67 @@ def compute_multioutstrength(adj: sps.csr_matrix, n: int, l: int, logger: Option
     return _accumulate_on_diagonal_blocks(adj.T, n, l, is_out_of_diagonal=True, weights=weights)
 
 
-def compute_aggregated_multioutstrength(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_aggregated_multioutstrength(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: logging.Logger | None = None) -> np.ndarray:
     """Compute aggregated multi-outstrength over layers. Returns shape (n,)."""
     return aggregate_metrics_over_layers(compute_multioutstrength(adj, n, l, logger=logger), method=method)
 
 
-def compute_total_indegree(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_total_indegree(adj: sps.csr_matrix, n: int, l: int, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute total indegree (intra + inter layer) stratified by layer. Returns shape (n, l)."""
     return compute_indegree(adj, n, l, logger=logger) + compute_multiindegree(adj, n, l, logger=logger)
 
 
-def compute_aggregated_total_indegree(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_aggregated_total_indegree(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: logging.Logger | None = None) -> np.ndarray:
     """Compute aggregated total indegree over layers. Returns shape (n,)."""
     return aggregate_metrics_over_layers(compute_total_indegree(adj, n, l, logger=logger), method=method)
 
 
-def compute_total_instrength(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_total_instrength(adj: sps.csr_matrix, n: int, l: int, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute total instrength (intra + inter layer) stratified by layer. Returns shape (n, l)."""
     return compute_instrength(adj, n, l, logger=logger) + compute_multiinstrength(adj, n, l, logger=logger)
 
 
-def compute_aggregated_total_instrength(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_aggregated_total_instrength(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: logging.Logger | None = None) -> np.ndarray:
     """Compute aggregated total instrength over layers. Returns shape (n,)."""
     return aggregate_metrics_over_layers(compute_total_instrength(adj, n, l, logger=logger), method=method)
 
 
-def compute_total_outdegree(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_total_outdegree(adj: sps.csr_matrix, n: int, l: int, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute total outdegree (intra + inter layer) stratified by layer. Returns shape (n, l)."""
     return compute_outdegree(adj, n, l, logger=logger) + compute_multioutdegree(adj, n, l, logger=logger)
 
 
-def compute_aggregated_total_outdegree(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_aggregated_total_outdegree(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: logging.Logger | None = None) -> np.ndarray:
     """Compute aggregated total outdegree over layers. Returns shape (n,)."""
     return aggregate_metrics_over_layers(compute_total_outdegree(adj, n, l, logger=logger), method=method)
 
 
-def compute_total_outstrength(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_total_outstrength(adj: sps.csr_matrix, n: int, l: int, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute total outstrength (intra + inter layer) stratified by layer. Returns shape (n, l)."""
     return compute_outstrength(adj, n, l, logger=logger) + compute_multioutstrength(adj, n, l, logger=logger)
 
 
-def compute_aggregated_total_outstrength(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_aggregated_total_outstrength(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: logging.Logger | None = None) -> np.ndarray:
     """Compute aggregated total outstrength over layers. Returns shape (n,)."""
     return aggregate_metrics_over_layers(compute_total_outstrength(adj, n, l, logger=logger), method=method)
 
 
-def compute_multidegree(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_multidegree(adj: sps.csr_matrix, n: int, l: int, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute multidegree (total indegree + total outdegree) stratified by layer. Returns shape (n, l)."""
     return compute_total_indegree(adj, n, l, logger=logger) + compute_total_outdegree(adj, n, l, logger=logger)
 
 
-def compute_aggregated_multidegree(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_aggregated_multidegree(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: logging.Logger | None = None) -> np.ndarray:
     """Compute aggregated multidegree over layers. Returns shape (n,)."""
     return aggregate_metrics_over_layers(compute_multidegree(adj, n, l, logger=logger), method=method)
 
 
-def compute_multistrength(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_multistrength(adj: sps.csr_matrix, n: int, l: int, logger: logging.Logger | None = None) -> np.ndarray:
     """Compute multistrength (total instrength + total outstrength) stratified by layer. Returns shape (n, l)."""
     return compute_total_instrength(adj, n, l, logger=logger) + compute_total_outstrength(adj, n, l, logger=logger)
 
 
-def compute_aggregated_multistrength(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_aggregated_multistrength(adj: sps.csr_matrix, n: int, l: int, method: str = "sum", logger: logging.Logger | None = None) -> np.ndarray:
     """Compute aggregated multistrength over layers. Returns shape (n,)."""
     return aggregate_metrics_over_layers(compute_multistrength(adj, n, l, logger=logger), method=method)
 
@@ -302,7 +299,7 @@ def compute_aggregated_multistrength(adj: sps.csr_matrix, n: int, l: int, method
 def compute_multi_degree(
     adj: sps.csr_matrix, n: int, l: int,
     is_directed: bool = True,
-    logger: Optional[logging.Logger] = None,
+    logger: logging.Logger | None = None,
 ) -> np.ndarray:
     """
     Compute multi-layer degree following muxViz R semantics.
@@ -340,7 +337,7 @@ def compute_multi_degree(
 # Centrality implementations (integrated from hornet/node_based)
 # ---------------------------------------------------------------------------
 
-def compute_eigenvector_centrality(adj: sps.csr_matrix, n: int, l: int, logger: Optional[logging.Logger] = None) -> np.ndarray:
+def compute_eigenvector_centrality(adj: sps.csr_matrix, n: int, l: int, logger: logging.Logger | None = None) -> np.ndarray:
     """
     Compute multi-layer eigenvector centrality using the dominant eigenvector of A^T.
 
@@ -387,7 +384,7 @@ def compute_katz_centrality(
     maxiter: int = 10000,
     tol: float = 1e-6,
     return_eigenvalue: bool = False,
-    logger: Optional[logging.Logger] = None,
+    logger: logging.Logger | None = None,
 ) -> np.ndarray | tuple[np.ndarray, float]:
     """
     Compute multi-layer Katz centrality.
@@ -558,7 +555,7 @@ def compute_multi_rw_centrality(
     adj: sps.csr_matrix, n: int, l: int, kind: str,
     *,
     alpha: float = 0.85, tol: float = 1e-12, max_iter: int = 10000,
-    logger: Optional[logging.Logger] = None,
+    logger: logging.Logger | None = None,
 ) -> np.ndarray:
     """
     Compute multi-layer random walk centrality.
@@ -649,7 +646,7 @@ def compute_multi_rw_centrality(
 
         err = np.inf
         it = 0
-        for it in range(max_iter):
+        for it in range(max_iter):  # noqa: B007  # read after the loop
             dangling_mass = x[dangling_mask].sum()
             x_next = alpha * (PT @ x) + (alpha * dangling_mass + (1.0 - alpha)) * v
             x_sum = x_next.sum()
@@ -685,7 +682,7 @@ def compute_multi_rw_centrality(
 def compute_multipagerank_centrality(
     adj: sps.csr_matrix, n: int, l: int,
     alpha: float = 0.85, tol: float = 1e-12, max_iter: int = 10000,
-    logger: Optional[logging.Logger] = None,
+    logger: logging.Logger | None = None,
 ) -> np.ndarray:
     """
     Compute multi-layer PageRank centrality.
@@ -723,8 +720,8 @@ def compute_multipagerank_centrality(
 def compute_multi_hub_centrality(
     adj: sps.csr_matrix, n: int, l: int,
     eps: float = 1e-16, max_attempts: int = 10,
-    approx: bool = False, approx_args: Optional[dict] = None,
-    logger: Optional[logging.Logger] = None,
+    approx: bool = False, approx_args: dict | None = None,
+    logger: logging.Logger | None = None,
 ) -> np.ndarray:
     """
     Compute multi-layer hub centrality using the dominant eigenvector of A * A^T.
@@ -800,8 +797,8 @@ def compute_multi_hub_centrality(
 def compute_multi_authority_centrality(
     adj: sps.csr_matrix, n: int, l: int,
     eps: float = 1e-16, max_attempts: int = 10,
-    approx: bool = False, approx_args: Optional[dict] = None,
-    logger: Optional[logging.Logger] = None,
+    approx: bool = False, approx_args: dict | None = None,
+    logger: logging.Logger | None = None,
 ) -> np.ndarray:
     """
     Compute multi-layer authority centrality using the dominant eigenvector of A^T * A.
@@ -883,7 +880,7 @@ def get_multi_degree(
     supra: sps.spmatrix, layers: int, nodes: int,
     is_directed: bool | None = None,
     backend: Literal["muxvizpy", "hornet"] = "muxvizpy",
-    logger: Optional[logging.Logger] = None,
+    logger: logging.Logger | None = None,
 ) -> np.ndarray:
     """
     Computes the degree of each physical node by aggregating the supra-adjacency matrix.

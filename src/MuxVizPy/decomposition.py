@@ -33,7 +33,7 @@ def _require_torch():
 # ---- helper functions -----
 
 def _prepare_tensor(
-    tensor: "torch.Tensor",
+    tensor: torch.Tensor,
 ) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
     """Extract coordinates and values from PyTorch sparse tensor.
 
@@ -84,7 +84,7 @@ def _initialize_factors(
 
     if method == "random":
         return backend.random_init(shapes, random_state)
-    
+
     elif method == "hosvd":
         if coords is None or values is None:
             raise ValueError("hosvd initialization requires coords and values")
@@ -121,7 +121,8 @@ def _initialize_factors(
                     # fallback to random if SVD fails
                     warnings.warn(
                         f"SVD failed, fall back to random init"
-                        f"Reason: {e}"
+                        f"Reason: {e}",
+                        stacklevel=2,
                     )
                     rng = np.random.default_rng(random_state)
                     factors.append(rng.standard_normal((dim,rank)))
@@ -131,7 +132,7 @@ def _initialize_factors(
         return factors
     else:
         raise ValueError(f"Unknown initialization method: {method}")
-    
+
 def _compute_multi_index(
         coords: np.ndarray,
         shape: tuple[int, ...],
@@ -216,7 +217,7 @@ def _compute_recon_error(
 # ---- core functions ----
 
 def _sparse_mttkrp_no_weights(
-        mode: int, 
+        mode: int,
         mode_indices: list[np.ndarray],
         values: np.ndarray,
         factors: list[np.ndarray],
@@ -259,7 +260,7 @@ def _compute_combined_gram_no_weights(
 ) -> np.ndarray:
     """
     compute hadamard product of gram matrices without separate weights
-    
+
     the combined gram matrix is:
     G = = (A'A) * (B'B) * (C'C) * (D'D)  (excluding the target mode)
 
@@ -312,7 +313,7 @@ def sparse_cp_decomposition(
         - Mode 3: target layers
 
     Args:
-        tensor (torch.Tensor): Pytorch sparse COO tensor with shape (N, L, N, L). 
+        tensor (torch.Tensor): Pytorch sparse COO tensor with shape (N, L, N, L).
         rank (int): The number of components for the CP decomposition.
         init (str): Initialization method for factor matrices ("random" or "hosvd").
             - random: Initialize factor matrices with random values.
@@ -382,7 +383,7 @@ def sparse_cp_decomposition(
 
     # use pre-transferred mode indices already on backend
     mode_indices = mode_indices_backend
-    
+
     # start loop for ALS iterations
     prev_error = np.inf
     convergence_history: CPHistory = {

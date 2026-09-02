@@ -1,9 +1,9 @@
-import polars as pl
-from typing import cast
-import numpy as np
-import scipy.sparse as sp
-from scipy.io import mmread
 from pathlib import Path
+from typing import cast
+
+import numpy as np
+import polars as pl
+import scipy.sparse as sp
 
 try:
     import torch

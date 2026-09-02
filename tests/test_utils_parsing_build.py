@@ -135,7 +135,12 @@ class TestInterlayerCouplingTensor:
         """Create an empty sparse tensor with the right shape."""
         indices = torch.empty((4, 0), dtype=torch.long)
         values = torch.empty(0, dtype=torch.float32)
-        return torch.sparse_coo_tensor(indices, values, size=(n, l, n, l))
+        return torch.sparse_coo_tensor(
+            indices,
+            values,
+            size=(n, l, n, l),
+            check_invariants=True,
+        )
 
     @pytest.mark.parametrize("kind", ["ordered", "categorical", "temporal"])
     def test_shape(self, kind):
@@ -174,6 +179,53 @@ class TestInterlayerCouplingTensor:
                         assert dense[node, li, node, lj] == 1.0
                     else:
                         assert dense[node, li, node, lj] == 0.0
+
+    def test_categorical_limit_uses_allocated_entry_count(self, monkeypatch):
+        tensor = self._make_empty_intra_tensor(1, 3)
+        monkeypatch.setattr(
+            parsing,
+            "MAX_CATEGORICAL_COUPLING_EDGES",
+            5,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match=r"requires 6 entries; limit is 5",
+        ):
+            parsing.build_interlayer_coupling_from_tensor(
+                tensor,
+                omega=1.0,
+                kind="categorical",
+            )
+
+    def test_categorical_limit_allows_exact_boundary(self, monkeypatch):
+        tensor = self._make_empty_intra_tensor(1, 3)
+        monkeypatch.setattr(
+            parsing,
+            "MAX_CATEGORICAL_COUPLING_EDGES",
+            6,
+        )
+
+        coupling = parsing.build_interlayer_coupling_from_tensor(
+            tensor,
+            omega=1.0,
+            kind="categorical",
+        )
+
+        assert coupling._nnz() == 6
+
+    @pytest.mark.parametrize("kind", ["ordered", "categorical", "temporal"])
+    def test_single_layer_coupling_is_empty(self, kind):
+        tensor = self._make_empty_intra_tensor(10_000, 1)
+
+        coupling = parsing.build_interlayer_coupling_from_tensor(
+            tensor,
+            omega=1.0,
+            kind=kind,
+        )
+
+        assert coupling.shape == tensor.shape
+        assert coupling._nnz() == 0
 
     def test_temporal_directed(self):
         n, l = 2, 3
@@ -312,6 +364,62 @@ class TestTensorGraphToolRoundtrip:
             np.testing.assert_allclose(
                 adj_back, adj_orig, atol=1e-10,
                 err_msg=f"Layer {i} adjacency mismatch after roundtrip",
+            )
+
+    def test_tensor_to_graph_preserves_weights(self):
+        indices = torch.tensor([[0], [0], [1], [0]], dtype=torch.long)
+        tensor = torch.sparse_coo_tensor(
+            indices,
+            torch.tensor([7.0]),
+            size=(2, 1, 2, 1),
+            check_invariants=True,
+        )
+
+        graph = parsing.build_list_of_graphs_from_tensor(tensor)[0]
+        edge = graph.edge(0, 1)
+
+        assert edge is not None
+        assert graph.ep["weight"][edge] == pytest.approx(7.0)
+
+    def test_undirected_conversion_deduplicates_reciprocal_entries(self):
+        indices = torch.tensor(
+            [[0, 1], [0, 0], [1, 0], [0, 0]],
+            dtype=torch.long,
+        )
+        tensor = torch.sparse_coo_tensor(
+            indices,
+            torch.tensor([2.0, 2.0]),
+            size=(2, 1, 2, 1),
+            check_invariants=True,
+        )
+
+        graph = parsing.build_list_of_graphs_from_tensor(
+            tensor,
+            directed=False,
+        )[0]
+
+        assert not graph.is_directed()
+        assert graph.num_edges() == 1
+        edge = graph.edge(0, 1)
+        assert edge is not None
+        assert graph.ep["weight"][edge] == pytest.approx(2.0)
+
+    def test_undirected_conversion_rejects_asymmetric_reciprocal_weights(self):
+        indices = torch.tensor(
+            [[0, 1], [0, 0], [1, 0], [0, 0]],
+            dtype=torch.long,
+        )
+        tensor = torch.sparse_coo_tensor(
+            indices,
+            torch.tensor([2.0, 3.0]),
+            size=(2, 1, 2, 1),
+            check_invariants=True,
+        )
+
+        with pytest.raises(ValueError, match="equal weights"):
+            parsing.build_list_of_graphs_from_tensor(
+                tensor,
+                directed=False,
             )
 
     def test_empty_graphs_raises(self):

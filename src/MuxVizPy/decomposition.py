@@ -1,12 +1,34 @@
 from __future__ import annotations
+
 import logging
 import warnings
-from typing import Literal
+from typing import Literal, TypedDict
 
 import numpy as np
-import torch
 
-from MuxVizPy.utils.decomposition_utils import get_backend, CPBackend
+from MuxVizPy.utils.decomposition_utils import CPBackend, get_backend
+
+try:
+    import torch
+except ImportError:
+    torch = None  # type: ignore[assignment]
+
+
+class CPHistory(TypedDict):
+    """Convergence measurements recorded after each ALS iteration."""
+
+    reconstruction_error: list[float]
+    elapsed_time: list[float]
+    elapsed_time_per_mode: list[list[float]]
+
+
+def _require_torch():
+    if torch is None:
+        raise ImportError(
+            "torch is required for this function. "
+            "Install it with: uv pip install torch --index-url "
+            "https://download.pytorch.org/whl/cpu"
+        )
 
 # ---- helper functions -----
 
@@ -148,23 +170,45 @@ def _compute_recon_error(
     Returns:
         reconstruction error (float)
     """
-    n_values = int(values.shape[0] if hasattr(values, "shape") else len(values))
-    if n_values == 0:
-        return 0.0
-    
-    # compute reconstructed values at non-zero coordinates
     n_modes = len(factors)
-    factor_vals = [factors[m][mode_indices[m],:] for m in range(n_modes)] # gather factor values: (nnz, rank) for each mode
-    product = factor_vals[0].copy()
-    for fv in factor_vals[1:]: # element wise product across modes
-        product *= fv
-    recon = product @ weights # apply weights: (nnz,) and perform reconstruction
+    n_values = int(values.shape[0] if hasattr(values, "shape") else len(values))
+    if n_values:
+        factor_values = [
+            factors[mode][mode_indices[mode], :]
+            for mode in range(n_modes)
+        ]
+        product = factor_values[0].copy()
+        for factor_value in factor_values[1:]:
+            product *= factor_value
+        reconstruction_at_nonzeros = product @ weights
+        cross = float(
+            np.asarray(
+                backend.to_numpy(values @ reconstruction_at_nonzeros)
+            )
+        )
+    else:
+        cross = 0.0
 
-    # compute error
-    diff  = values - recon
-    diff_norm = backend.compute_norm(diff)
-    values_norm = backend.compute_norm(values)
-    return diff_norm / values_norm if values_norm > 0 else 0.0
+    values_norm = float(backend.compute_norm(values))
+    values_norm_sq = values_norm**2
+    factor_grams = [
+        backend.gram_matrix(factor) for factor in factors
+    ]
+    gram_product = backend.hadamard_gram(factor_grams)
+    weighted_gram = (
+        weights[:, None] * weights[None, :] * gram_product
+    )
+    reconstruction_norm_sq = float(
+        np.asarray(backend.to_numpy(weighted_gram)).sum()
+    )
+
+    error_sq = max(
+        values_norm_sq + reconstruction_norm_sq - 2.0 * cross,
+        0.0,
+    )
+    if values_norm_sq > 0.0:
+        return float(np.sqrt(error_sq / values_norm_sq))
+    return float(np.sqrt(error_sq))
 
 # ---- core functions ----
 
@@ -245,7 +289,11 @@ def sparse_cp_decomposition(
         random_state: int | None = None,
         logger: logging.Logger | None = None,
         backend: Literal["numpy", "rapids", "auto"] = "auto",
-) -> tuple[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor]:
+) -> tuple[
+    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    np.ndarray,
+    CPHistory,
+]:
     """
     Perform sparse CP/PARAFAC decomposition on a multi-layer network tensor.
 
@@ -275,11 +323,8 @@ def sparse_cp_decomposition(
         backend (str): Computational backend to use ("numpy", "rapids", or "auto").
 
     Returns:
-        A (torch.Tensor): Factor matrix for source nodes (shape: N x rank).
-        B (torch.Tensor): Factor matrix for source layers (shape: L x rank).
-        C (torch.Tensor): Factor matrix for target nodes (shape: N x rank).
-        D (torch.Tensor): Factor matrix for target layers (shape: L x rank).
-        lambdas (torch.Tensor): Weights of the components (shape: rank).
+        A tuple containing four NumPy factor matrices, a NumPy array of
+        component weights, and a convergence-history dictionary.
 
     Example:
         >>> import torch
@@ -288,17 +333,39 @@ def sparse_cp_decomposition(
         >>> N, L = 1000, 10
         >>> indices = torch.randint(0, N, (4, 10000))  # 10k non-zero entries
         >>> values = torch.rand(10000)
-        >>> tensor = torch.sparse_coo_tensor(indices, values, size=(N, L, N, L))
+        >>> tensor = torch.sparse_coo_tensor(
+        ...     indices,
+        ...     values,
+        ...     size=(N, L, N, L),
+        ...     check_invariants=True,
+        ... )
         >>> rank = 5
-        >>> A, B, C, D, lambdas = sparse_cp_decomposition(tensor, rank)
+        >>> (A, B, C, D), weights, history = sparse_cp_decomposition(
+        ...     tensor, rank
+        ... )
     """
+    _require_torch()
+    if (
+        tensor.ndim != 4
+        or tensor.shape[0] != tensor.shape[2]
+        or tensor.shape[1] != tensor.shape[3]
+    ):
+        raise ValueError(
+            "tensor must be four-dimensional with shape (N, L, N, L)"
+        )
+    if (
+        isinstance(rank, bool)
+        or not isinstance(rank, int)
+        or rank <= 0
+    ):
+        raise ValueError("rank must be a positive integer")
+
     # Initialize the backend
     be = get_backend(backend)
 
     # prepare tensor data
     coords, values, shape = _prepare_tensor(tensor)
     n_modes = len(shape)
-    nnz = len(values)
 
     # transfer data to backend device
     values = be.to_backend(values)
@@ -315,8 +382,11 @@ def sparse_cp_decomposition(
     
     # start loop for ALS iterations
     prev_error = np.inf
-    prev_time = 0.0
-    convergence_history: dict[str, list[float]] = {"reconstruction_error": [], "elapsed_time": [], "elapsed_time_per_mode": []}
+    convergence_history: CPHistory = {
+        "reconstruction_error": [],
+        "elapsed_time": [],
+        "elapsed_time_per_mode": [],
+    }
     iIter = 0
     notConverged = True
     while iIter < max_iter and notConverged:

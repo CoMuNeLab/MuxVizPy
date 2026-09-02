@@ -55,13 +55,10 @@ def _katz_neumann(
         Approximate solution x, shape (NL,). Issues a ``UserWarning`` if
         the iteration did not converge within ``maxiter``.
 
-    Notes
-    -----
-    The starting vector is drawn from ``np.random.randn``; seed the global
-    NumPy RNG before calling if you need reproducibility.
+    The iteration starts from the right-hand side, making repeated calls
+    deterministic.
     """
-    NL = b.shape[0]
-    x = np.random.randn(NL)
+    x = b.astype(np.float64, copy=True)
     delta_x = float("inf")
     for i in range(maxiter):
         x_new = alpha * adj @ x + b

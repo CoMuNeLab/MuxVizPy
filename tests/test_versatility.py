@@ -11,12 +11,12 @@ Classes:
     TestVersatilityReference        — comparison against pre-computed muxViz R results
 """
 
-import pytest
 import numpy as np
+import pytest
 import scipy.sparse as sp
-from MuxVizPy import versatility
 from conftest import compare_metrics
 
+from MuxVizPy import versatility
 
 # ============================================================================
 # Correctness — shapes, value ranges, basic invariants
@@ -266,6 +266,196 @@ class TestKatzCentralityAgreement:
         np.testing.assert_allclose(bicgstab_result, exact, atol=5e-4)
 
 
+class TestCentralityEdgeCases:
+    """Centrality behavior for tiny, empty, reducible, and acyclic networks."""
+
+    def test_legacy_random_walk_honors_cval_and_normalizes_after_aggregation(
+        self,
+    ):
+        layers = [
+            sp.csr_matrix(
+                [[0, 1, 0], [1, 0, 1], [0, 1, 0]], dtype=float
+            ),
+            sp.csr_matrix(
+                [[0, 1, 1], [1, 0, 0], [1, 0, 0]], dtype=float
+            ),
+        ]
+
+        np.random.seed(123)
+        low = versatility.get_multi_RW_centrality_edge_colored(
+            layers, cval=0.0
+        )
+        np.random.seed(123)
+        high = versatility.get_multi_RW_centrality_edge_colored(
+            layers, cval=0.9
+        )
+
+        assert not low.equals(high)
+        assert low["vers"].max() == pytest.approx(1.0)
+        assert high["vers"].max() == pytest.approx(1.0)
+
+    @pytest.mark.parametrize("alpha", [0.0, -0.1, 1.1, np.inf, np.nan])
+    def test_pagerank_rejects_invalid_alpha(self, alpha):
+        adjacency = sp.csr_matrix(
+            [[0, 1, 0], [0, 0, 1], [0, 0, 1]], dtype=float
+        )
+
+        with pytest.raises(ValueError, match="alpha"):
+            versatility.compute_multi_rw_centrality(
+                adjacency, n=3, l=1, kind="pagerank", alpha=alpha
+            )
+
+    @pytest.mark.parametrize(
+        ("parameter", "value"),
+        [("tol", 0.0), ("tol", np.nan), ("max_iter", 0)],
+    )
+    def test_pagerank_rejects_invalid_iteration_parameters(
+        self, parameter, value
+    ):
+        adjacency = sp.eye(3, format="csr")
+        kwargs = {parameter: value}
+
+        with pytest.raises(ValueError, match=parameter):
+            versatility.compute_multi_rw_centrality(
+                adjacency, n=3, l=1, kind="pagerank", **kwargs
+            )
+
+    def test_pagerank_raises_when_iteration_does_not_converge(self):
+        adjacency = sp.csr_matrix(
+            [[0, 1, 0], [0, 0, 1], [0, 0, 1]], dtype=float
+        )
+
+        with pytest.raises(RuntimeError, match="converge"):
+            versatility.compute_multi_rw_centrality(
+                adjacency,
+                n=3,
+                l=1,
+                kind="pagerank",
+                tol=1e-16,
+                max_iter=1,
+            )
+
+    def test_pagerank_empty_network_returns_empty_result(self):
+        result = versatility.compute_multi_rw_centrality(
+            sp.csr_matrix((0, 0)), n=0, l=1, kind="pagerank"
+        )
+
+        assert result.shape == (0,)
+
+    def test_eigenvector_is_deterministic_on_bipartite_network(self):
+        adjacency = sp.diags(
+            [np.ones(3), np.ones(3)],
+            offsets=[-1, 1],
+            shape=(4, 4),
+            format="csr",
+        )
+
+        results = [
+            versatility.compute_eigenvector_centrality(adjacency, n=4, l=1)
+            for _ in range(3)
+        ]
+
+        for result in results:
+            assert np.all(result >= 0)
+            np.testing.assert_allclose(
+                result,
+                [0.618034, 1.0, 1.0, 0.618034],
+                atol=1e-6,
+            )
+
+    def test_classical_random_walk_is_nonnegative_and_deterministic(self):
+        adjacency = sp.diags(
+            [np.ones(3), np.ones(3)],
+            offsets=[-1, 1],
+            shape=(4, 4),
+            format="csr",
+        )
+
+        results = [
+            versatility.compute_multi_rw_centrality(
+                adjacency, n=4, l=1, kind="classical"
+            )
+            for _ in range(3)
+        ]
+
+        for result in results:
+            assert np.all(result >= 0)
+            np.testing.assert_allclose(result, [0.5, 1.0, 1.0, 0.5])
+
+    def test_empty_networks_return_empty_centralities(self):
+        adjacency = sp.csr_matrix((0, 0))
+
+        results = [
+            versatility.compute_eigenvector_centrality(adjacency, n=0, l=1),
+            versatility.compute_katz_centrality(adjacency, n=0, l=1),
+            versatility.compute_multi_rw_centrality(
+                adjacency, n=0, l=1, kind="classical"
+            ),
+            versatility.compute_multi_hub_centrality(adjacency, n=0, l=1),
+            versatility.compute_multi_authority_centrality(
+                adjacency, n=0, l=1
+            ),
+        ]
+
+        assert all(result.shape == (0,) for result in results)
+
+    def test_explicit_katz_alpha_supports_zero_radius_network(self):
+        adjacency = sp.diags(
+            np.ones(9), offsets=1, shape=(10, 10), format="csr"
+        )
+
+        first = versatility.compute_katz_centrality(
+            adjacency, n=10, l=1, alpha=0.5, solver="neumann"
+        )
+        second = versatility.compute_katz_centrality(
+            adjacency, n=10, l=1, alpha=0.5, solver="neumann"
+        )
+
+        assert np.all(first >= 0)
+        np.testing.assert_array_equal(first, second)
+
+    @pytest.mark.parametrize("alpha", [-0.1, 1.0, np.inf, np.nan])
+    def test_katz_rejects_invalid_explicit_alpha(self, alpha):
+        adjacency = sp.csr_matrix([[0, 1], [1, 0]], dtype=float)
+
+        with pytest.raises(ValueError, match="alpha"):
+            versatility.compute_katz_centrality(
+                adjacency, n=2, l=1, alpha=alpha
+            )
+
+    def test_exact_hits_balances_tied_components_deterministically(self):
+        adjacency = sp.csr_matrix(
+            (
+                np.ones(6),
+                ([0, 0, 0, 4, 4, 4], [1, 2, 3, 5, 6, 7]),
+            ),
+            shape=(8, 8),
+        )
+
+        hub_results = [
+            versatility.compute_multi_hub_centrality(adjacency, n=8, l=1)
+            for _ in range(3)
+        ]
+        authority_results = [
+            versatility.compute_multi_authority_centrality(
+                adjacency, n=8, l=1
+            )
+            for _ in range(3)
+        ]
+
+        for result in hub_results + authority_results:
+            assert np.all(result >= 0)
+        for result in hub_results[1:]:
+            np.testing.assert_array_equal(result, hub_results[0])
+        for result in authority_results[1:]:
+            np.testing.assert_array_equal(result, authority_results[0])
+        assert hub_results[0][0] == pytest.approx(hub_results[0][4])
+        np.testing.assert_allclose(
+            authority_results[0][1:4],
+            authority_results[0][5:8],
+        )
+
+
 # ============================================================================
 # Backend comparison — muxvizpy vs hornet
 # ============================================================================
@@ -290,6 +480,49 @@ class TestVersatilityBackendComparison:
         assert np.all(mv >= 0)
         assert np.all(hn >= 0)
 
+    def test_unknown_degree_backend_raises(self):
+        with pytest.raises(ValueError, match="backend"):
+            versatility.get_multi_degree(
+                sp.eye(2, format="csr"),
+                layers=1,
+                nodes=2,
+                backend="unknown",
+            )
+
+    def test_muxvizpy_degree_rejects_directed_flag(self):
+        adjacency = sp.csr_matrix([[0, 1], [0, 0]], dtype=float)
+
+        for is_directed in (True, False):
+            with pytest.raises(ValueError, match="is_directed|hornet"):
+                versatility.get_multi_degree(
+                    adjacency,
+                    layers=1,
+                    nodes=2,
+                    backend="muxvizpy",
+                    is_directed=is_directed,
+                )
+
+    def test_hornet_degree_honors_directed_flag(self):
+        adjacency = sp.csr_matrix([[0, 1], [0, 0]], dtype=float)
+
+        directed = versatility.get_multi_degree(
+            adjacency,
+            layers=1,
+            nodes=2,
+            backend="hornet",
+            is_directed=True,
+        )
+        undirected = versatility.get_multi_degree(
+            adjacency,
+            layers=1,
+            nodes=2,
+            backend="hornet",
+            is_directed=False,
+        )
+
+        np.testing.assert_array_equal(directed, [1.0, 1.0])
+        np.testing.assert_array_equal(undirected, [0.5, 0.5])
+
 # ============================================================================
 # Reference — comparison against pre-computed muxViz R results
 # ============================================================================
@@ -297,7 +530,8 @@ class TestVersatilityBackendComparison:
 class TestVersatilityReference:
     """Compare results against muxViz R reference.
 
-    Pre-computed results are loaded from tests/data/{config}/muxviz_results.json.
+    Pre-computed results are loaded from
+    tests/reference_data/{config}/muxviz_results.json.
     Tests are skipped for configs without reference data.
     """
 
@@ -307,7 +541,7 @@ class TestVersatilityReference:
         computed = versatility.compute_katz_centrality(
             net_interaction, net_n, net_l, solver="direct", return_eigenvalue=False,
         )
-        # muxviz reference is rounded to 4 dp → need atol >= 5e-4
+        # The Python and R eigensolvers differ slightly in their numerical results.
         compare_metrics(computed, net_muxviz_results["katz"], "Katz exact (vs muxViz R)",
                         rtol=5e-4, atol=5e-4)
 

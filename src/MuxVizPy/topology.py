@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from .utils.parsing import get_aggregate_network
 from .utils.parsing import (
+    _graph_from_sparse,
     get_node_tensor_from_network_list,
     supra_adjacency_to_network_list,
 )
@@ -65,11 +66,7 @@ def get_multi_LIC(obj: list[gt.Graph] | list[sps.spmatrix], obj_type: str = "gli
     if obj_type=="glist":
         glist = obj
     elif obj_type=="tensor":
-        glist=[]
-        for t in tensor:
-            g=gt.Graph(directed=False)
-            g.add_edge_list(np.transpose(t.todense().nonzero()))
-            glist.append(g)
+        glist = [_graph_from_sparse(adjacency) for adjacency in obj]
         
     lcc_per_lay = [gt.topology.extract_largest_component(g).get_vertices() for g in glist]
     lcc_inters = reduce(np.intersect1d, lcc_per_lay)
@@ -160,12 +157,15 @@ def get_connected_components(supra: sps.spmatrix, layers: int, nodes: int) -> np
         If the same physical node belongs to two non-trivial components in
         different layers, making a consistent labelling impossible.
     """
-    g = gt.Graph(directed=False)
-    g.add_edge_list(np.transpose(supra.nonzero()))
-    components_all = gt.topology.label_components(g)
-    
-    components = components_all[0]
-    components_size = components_all[1]
+    expected_shape = (layers * nodes, layers * nodes)
+    if supra.shape != expected_shape:
+        raise ValueError(
+            f"Supra-adjacency matrix shape {supra.shape} != {expected_shape}"
+        )
+
+    graph = _graph_from_sparse(supra)
+    component_map, component_sizes = gt.topology.label_components(graph)
+    replica_components = component_map.get_array()
 
     #first we have to check if the same entity is assigned to the same component
     #eg, if node A in layer 1 is assigned to component 1 and node A in layer 2 is assigned to component 2
@@ -173,30 +173,27 @@ def get_connected_components(supra: sps.spmatrix, layers: int, nodes: int) -> np
     #should be assigned to the same component, and this happens if they are interconnected or
     #if some of the replicas are isolated components while the others are interconnected
 
-    if layers > 1:
-      new_components = np.zeros(nodes)
-      for n in range(nodes): 
-        comp = components[n]  #the component assigned to n in layer 1
-        new_components[n] = comp
+    selected_components = np.empty(nodes, dtype=int)
+    for node in range(nodes):
+        labels = replica_components[node::nodes]
+        nontrivial = np.unique(
+            labels[component_sizes[labels] > 1]
+        )
+        if len(nontrivial) > 1:
+            raise ValueError(
+                f"Physical node {node} belongs to multiple non-trivial "
+                f"components: {nontrivial.tolist()}"
+            )
+        if len(nontrivial) == 1:
+            selected_components[node] = nontrivial[0]
+        else:
+            selected_components[node] = labels[0]
 
-        for l in range(1,layers):
-          ctmp = components[l*nodes+n]
-          if ctmp!=comp:
-            #check if it is isolated
-            if components_size[ctmp]!=1 and components_size[comp]!=1:
-              print("  Impossible to find meaningful connected components\n")
-              print(f"  Node {n} in layer 0 is in component {comp} (size {components_size[comp]}) while ")
-              print(f"  Node {n} (abs id: {l*nodes+n}) in layer {l} is in component {ctmp} (size {components_size[ctmp]}) \n")
-              raise ValueError("  Aborting process.\n")
-
-      components = np.zeros(nodes)
-      comps = np.unique(new_components)
-
-      #readjust the components label
-      for i in range(len(comps)):
-        components[np.where(new_components==comps[i])]=i
-
-    return components
+    _, normalized_components = np.unique(
+        selected_components,
+        return_inverse=True,
+    )
+    return normalized_components
 def get_multi_path_statistics(supra: sps.spmatrix, layers: int, nodes: int) -> dict:
     """
     Compute multilayer shortest-path statistics.
@@ -216,33 +213,38 @@ def get_multi_path_statistics(supra: sps.spmatrix, layers: int, nodes: int) -> d
         Dictionary with the following keys:
 
         - ``"distance_matrix"``: numpy.ndarray of shape ``(nodes, nodes)`` —
-          pairwise minimum-path distances between physical nodes.
+          pairwise minimum-path distances between physical nodes. Unreachable
+          pairs are represented by infinity.
         - ``"avg_path_length"``: float — average path length defined as
-          ``1 / mean(closeness)``.
+          ``1 / mean(closeness)``. It is infinite when every closeness value
+          is zero.
         - ``"closeness"``: list of float — closeness centrality for each
-          physical node (Opsahl et al., 2010).
+          physical node (Opsahl et al., 2010). Unreachable nodes contribute
+          zero to the reciprocal-distance mean.
     """
-    n = supra.shape[0]
+    expected_shape = (layers * nodes, layers * nodes)
+    if supra.shape != expected_shape:
+        raise ValueError(
+            f"Supra-adjacency matrix shape {supra.shape} != {expected_shape}"
+        )
 
     if layers==1:
         #standard monoplex analysis
         #g <- igraph::graph_from_adjacency_matrix(SupraAdjacencyMatrix, weighted=T, mode="undirected")
-        g = gt.Graph(directed=False)
-        g.add_edge_list(np.transpose(supra.nonzero()))
-             
+        g = _graph_from_sparse(supra)
+
         DMIN = gt.topology.shortest_distance(g).get_2d_array(g.get_vertices())
-        
+
     else:
         #multilayer analysis
         #g.ext <- igraph::graph_from_adjacency_matrix(SupraAdjacencyMatrix, weighted=T, mode="undirected")
         #TODO: I removed the restriction to undirected mode only, worth checking that it does not create issues
-        g_ext = gt.Graph(directed=False)
-        g_ext.add_edge_list(np.transpose(supra.nonzero()))
-  
+        g_ext = _graph_from_sparse(supra)
+
         DMIN=np.zeros([nodes,nodes])
-        
+
         for j in tqdm(range(nodes)):
-        
+
             for k in range(layers):
                 DP=gt.topology.shortest_distance(g_ext, source=g_ext.vertex((k*nodes)+j)).get_array()
                 DP_min=np.minimum.reduce(DP.reshape([layers,nodes]))
@@ -256,7 +258,23 @@ def get_multi_path_statistics(supra: sps.spmatrix, layers: int, nodes: int) -> d
     #Opsahl, T., Agneessens, F., Skvoretz, J. (2010). Node centrality in weighted networks: Generalizing degree and shortest paths. Social Networks 32, 245-251
     #https://toreopsahl.com/2010/03/20/closeness-centrality-in-networks-with-disconnected-components/
 
-    closeness = [np.mean(1/np.delete(DMIN[n,:],n)) for n in range(nodes)]
+    DMIN = np.asarray(DMIN, dtype=np.float64)
+    DMIN[DMIN >= np.iinfo(np.int32).max] = np.inf
+
+    reciprocal_distances = np.zeros_like(DMIN)
+    reachable = np.isfinite(DMIN) & (DMIN > 0.0)
+    np.divide(
+        1.0,
+        DMIN,
+        out=reciprocal_distances,
+        where=reachable,
+    )
+    if nodes > 1:
+        closeness = (
+            reciprocal_distances.sum(axis=1) / (nodes - 1)
+        ).tolist()
+    else:
+        closeness = np.zeros(nodes, dtype=np.float64).tolist()
     #0 if disconnected, 1 if connected to all other nodes
 
     ###############
@@ -264,7 +282,10 @@ def get_multi_path_statistics(supra: sps.spmatrix, layers: int, nodes: int) -> d
     ###############
     #this is a personal definition, should be checked.
     #of course, for networks with isolated nodes mean(1/closeness) = Inf, instead the following is safe:
-    avg_path_length = 1 / np.mean(closeness)
+    mean_closeness = float(np.mean(closeness)) if closeness else 0.0
+    avg_path_length = (
+        1.0 / mean_closeness if mean_closeness > 0.0 else np.inf
+    )
 
     ###############
     #betweenness
@@ -310,7 +331,9 @@ def get_SP_similarity_matrix(supra: sps.spmatrix, layers: int, nodes: int) -> np
         frobenius_norm[l1,l2] = np.linalg.norm(distance_list[l1]-distance_list[l2])
         frobenius_norm[l2,l1] = frobenius_norm[l1,l2]
 
-    frobenius_norm = 1-(frobenius_norm/np.max(frobenius_norm))
+    scale = float(np.max(frobenius_norm))
+    if scale == 0.0:
+      return np.ones((layers, layers), dtype=float)
+    frobenius_norm = 1-(frobenius_norm/scale)
 
     return frobenius_norm
-

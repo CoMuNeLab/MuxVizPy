@@ -8,10 +8,15 @@ from graph_tool import centrality #, inference
 import graph_tool.correlations as gtcorr
 import graph_tool.clustering as gtclust
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 from MuxVizPy.utils import approx_utils
-from MuxVizPy.utils.approx_utils import get_largest_magnitude_eigenvalue, get_largest_real_eigenvalue, approximate_largest_eigenvalue
+from MuxVizPy.utils.approx_utils import (
+    approximate_largest_eigenvalue,
+    get_largest_magnitude_eigenvalue,
+    get_largest_real_eigenvalue,
+    get_perron_eigenpair,
+)
 from MuxVizPy.utils import parsing as parsing_utils
 from MuxVizPy.utils.katz_utils import _katz_neumann, _katz_krylov, _VALID_SOLVERS
 
@@ -361,7 +366,7 @@ def compute_eigenvector_centrality(adj: sps.csr_matrix, n: int, l: int, logger: 
         raise ValueError(f"Adjacency matrix shape {adj.shape} != ({NL}, {NL})")
 
     AT = adj.transpose().tocsc()
-    lam, lvec = get_largest_magnitude_eigenvalue(AT, logger=logger)
+    lam, lvec = get_perron_eigenpair(AT, logger=logger)
 
     X = np.reshape(lvec, (n, l), order="F")
     eig_centrality = X.sum(axis=1)
@@ -377,6 +382,7 @@ def compute_eigenvector_centrality(adj: sps.csr_matrix, n: int, l: int, logger: 
 def compute_katz_centrality(
     adj: sps.csr_matrix, n: int, l: int,
     *,
+    alpha: float | None = None,
     solver: str = "direct",
     maxiter: int = 10000,
     tol: float = 1e-6,
@@ -390,10 +396,12 @@ def compute_katz_centrality(
 
         (I - alpha * A) x = 1,
 
-    with ``alpha = (1 - EPS) / rho(A)``, where ``rho(A)`` is the spectral
-    radius of the supra-adjacency matrix ``A``. The vector x is then reshaped
-    to ``(n, l)`` in column-major order, summed across layers to aggregate
-    replicas, and max-normalized so that the largest score equals 1.
+    By default, ``alpha = (1 - EPS) / rho(A)``, where ``rho(A)`` is the
+    spectral radius of the supra-adjacency matrix ``A``. Callers can pass an
+    explicit ``alpha`` for networks whose spectral radius is zero. The vector
+    x is then reshaped to ``(n, l)`` in column-major order, summed across
+    layers to aggregate replicas, and max-normalized so that the largest score
+    equals 1.
 
     Four solvers are available via the ``solver`` keyword:
 
@@ -420,6 +428,10 @@ def compute_katz_centrality(
         Number of physical nodes.
     l : int
         Number of layers.
+    alpha : float, optional
+        Katz attenuation factor. It must be nonnegative and, when the
+        spectral radius is positive, strictly smaller than ``1 / rho(A)``.
+        If omitted, the muxViz-compatible automatic value is used.
     solver : {"direct", "neumann", "gmres", "bicgstab"}, default ``"direct"``
         Linear solver used to invert ``(I - alpha * A)``. See the function
         description for the trade-offs of each branch.
@@ -451,13 +463,10 @@ def compute_katz_centrality(
         If ``adj`` is not a SciPy sparse matrix.
     ValueError
         If ``adj.shape != (n*l, n*l)`` or if ``solver`` is not one of the
-        supported values.
+        supported values. Also raised when the automatic attenuation factor
+        is undefined or an explicit factor is outside the stable range.
 
-    Notes
-    -----
-    The ``"neumann"`` branch initializes its iterate from
-    ``np.random.randn``; seed the global NumPy RNG before calling for
-    reproducibility.
+    The ``"neumann"`` branch uses a deterministic starting vector.
     """
     EPS = 1e-5
     NL = n * l
@@ -470,11 +479,49 @@ def compute_katz_centrality(
             f"Unknown solver {solver!r}. Valid options: {_VALID_SOLVERS}"
         )
 
-    lam, _ = get_largest_magnitude_eigenvalue(adj, logger=logger)
+    if NL == 0:
+        empty = np.empty(0, dtype=np.float32)
+        return (empty, 0.0) if return_eigenvalue else empty
 
-    spectral_radius = float(np.abs(lam))
-    alpha = (1 - EPS) / spectral_radius
-    # IMPORTANT - we choose this alpha because of MUXVIZ. EVEN if it has some issues.
+    matrix = adj.tocsr(copy=True)
+    matrix.sum_duplicates()
+    matrix.eliminate_zeros()
+    is_nonnegative = not np.any(matrix.data < 0)
+    has_self_loop = np.any(matrix.diagonal() != 0)
+    strong_components = sps.csgraph.connected_components(
+        matrix,
+        directed=True,
+        connection="strong",
+        return_labels=False,
+    )
+    is_acyclic = (
+        is_nonnegative
+        and not has_self_loop
+        and strong_components == NL
+    )
+
+    if is_acyclic:
+        lam = 0.0
+        spectral_radius = 0.0
+    elif is_nonnegative:
+        lam, _ = get_perron_eigenpair(matrix, logger=logger)
+        spectral_radius = max(float(lam), 0.0)
+    else:
+        lam, _ = get_largest_magnitude_eigenvalue(matrix, logger=logger)
+        spectral_radius = float(np.abs(lam))
+
+    if alpha is None:
+        if spectral_radius == 0.0:
+            raise ValueError(
+                "automatic Katz alpha is undefined for a zero spectral radius; "
+                "pass an explicit alpha"
+            )
+        alpha = (1 - EPS) / spectral_radius
+        # Keep the automatic value for muxViz parity.
+    elif not np.isfinite(alpha) or alpha < 0:
+        raise ValueError("alpha must be a finite nonnegative value")
+    elif spectral_radius > 0 and alpha * spectral_radius >= 1:
+        raise ValueError("alpha must be strictly smaller than 1 / spectral radius")
 
     b = np.ones(NL, dtype=np.float64)
 
@@ -483,14 +530,14 @@ def compute_katz_centrality(
         x = _katz_neumann(adj, alpha, b, maxiter=maxiter, tol=tol, logger=logger)
     else:
         # Direct and Krylov branches both need the explicit operator Aop.
-        I = sps.eye(NL, format="csc", dtype=np.float64)    
-        Aop = I - alpha * adj.tocsc()
+        identity_matrix = sps.eye(NL, format="csc", dtype=np.float64)
+        Aop = identity_matrix - alpha * adj.tocsc()
         if solver == "direct":
             x = sps.linalg.spsolve(Aop, b)
         else:  # "gmres" or "bicgstab"
             x = _katz_krylov(Aop, b, method=solver, maxiter=maxiter, tol=tol)
 
-    eigenvalue = (x.T @ adj @ x) / (x.T @ x) # Rayleigh quotient for the Katz operator
+    eigenvalue = float((x.T @ adj @ x) / (x.T @ x))
 
     X = np.reshape(x, (n, l), order="F")
     katz_centrality = X.sum(axis=1)
@@ -500,7 +547,7 @@ def compute_katz_centrality(
     if logger and logger.isEnabledFor(logging.DEBUG):
         logger.debug("Katz: alpha=%.6g, lambda_max=%.6g, min/mean/max=%.4g/%.4g/%.4g",
                      alpha, lam, katz.min(), katz.mean(), katz.max())
-        
+
     if return_eigenvalue:
         return katz, eigenvalue
     else:
@@ -552,11 +599,15 @@ def compute_multi_rw_centrality(
         tran_matrix = parsing_utils.build_transition_matrix_from_adjacency_matrix(
             adj, n, l, kind="classical", logger=logger,
         )
-        eigvals, eigvecs = sps.linalg.eigs(tran_matrix.T, k=1, which="LM", return_eigenvectors=True)
-        lam = float(np.real_if_close(eigvals[0]))
-        vec = np.real_if_close(eigvecs[:, 0])
+        if NL == 0:
+            return np.empty(0, dtype=np.float32)
 
-        x = vec / vec.sum()
+        lam, vec = get_perron_eigenpair(tran_matrix.T, logger=logger)
+
+        total = vec.sum()
+        if total == 0:
+            return np.zeros(n, dtype=np.float32)
+        x = vec / total
         x = np.reshape(x, (n, l), order="F")
         x = x.sum(axis=1)
 
@@ -568,9 +619,22 @@ def compute_multi_rw_centrality(
         return rc
 
     elif kind == "pagerank":
+        if not np.isfinite(alpha) or not 0.0 < alpha <= 1.0:
+            raise ValueError("alpha must be finite and in (0, 1] for pagerank")
+        if not np.isfinite(tol) or tol <= 0.0:
+            raise ValueError("tol must be a positive finite value")
+        if (
+            isinstance(max_iter, bool)
+            or not isinstance(max_iter, (int, np.integer))
+            or max_iter < 1
+        ):
+            raise ValueError("max_iter must be a positive integer")
+
         P = parsing_utils.build_transition_matrix_from_adjacency_matrix(
             adj, n, l, kind="classical", logger=logger,
         ).tocsr()
+        if NL == 0:
+            return np.empty(0, dtype=np.float32)
 
         row_sums = np.asarray(P.sum(axis=1)).ravel()
         dangling_mask = row_sums == 0.0
@@ -595,6 +659,11 @@ def compute_multi_rw_centrality(
             x = x_next
             if err < tol:
                 break
+        else:
+            raise RuntimeError(
+                f"PageRank did not converge within {max_iter} iterations "
+                f"(error={err:.3e})"
+            )
 
         if logger and logger.isEnabledFor(logging.DEBUG):
             logger.debug("PageRank converged in %d iterations with error %.3e", it + 1, err)
@@ -660,10 +729,9 @@ def compute_multi_hub_centrality(
     """
     Compute multi-layer hub centrality using the dominant eigenvector of A * A^T.
 
-    N.B. The retry loop (max_attempts) exists because scipy.sparse.linalg.eigs
-    (ARPACK) uses random initialization and can return degenerate eigenvectors
-    on small or very sparse supra-matrices. The approximate path (power
-    iteration with eps perturbation) is deterministic and does not need retries.
+    The exact path uses a fixed positive starting vector. For repeated dominant
+    eigenvalues this selects a deterministic balanced projection across tied
+    components.
 
     Parameters
     ----------
@@ -674,9 +742,11 @@ def compute_multi_hub_centrality(
     l : int
         Number of layers.
     eps : float
-        Small value added for Perron-Frobenius uniqueness.
+        Positive perturbation used by the approximate solver. The exact
+        deterministic solver does not require it.
     max_attempts : int
-        Max eigenvalue search retries (relevant for exact path only).
+        Retained for backward compatibility. The deterministic solver performs
+        one attempt.
     approx : bool
         Use approximate eigenvalue computation.
     approx_args : dict, optional
@@ -688,31 +758,42 @@ def compute_multi_hub_centrality(
     np.ndarray
         Max-normalized hub centrality per physical node, shape (n,).
     """
+    NL = n * l
+    if not sps.isspmatrix(adj):
+        raise TypeError("adj must be a SciPy sparse matrix")
+    if adj.shape != (NL, NL):
+        raise ValueError(f"Adjacency matrix shape {adj.shape} != ({NL}, {NL})")
+    if NL == 0:
+        return np.empty(0, dtype=np.float32)
+
     AA = adj.dot(adj.T)
     if approx and approx_args is None:
         approx_args = {"maxiter": 1000, "tol": 1e-6}
-    eigen_search_failed = True
-    count_eigen_attempts = 0
-    while eigen_search_failed and count_eigen_attempts < max_attempts:
-        if approx:
-            if logger:
-                logger.debug("Using approximate largest eigenvalue computation for hub centrality")
-            eigenval, eigenvec = approximate_largest_eigenvalue(
-                AA, alpha=1.0, cval=approx_args.get("cval", eps),
-                maxiter=approx_args.get("maxiter", 1000),
-                tol=approx_args.get("tol", 1e-6))
-        else:
-            eigenval, eigenvec = get_largest_real_eigenvalue(AA, logger=logger)
-        hc = eigenvec.reshape((l, n)).sum(axis=0)
-        hc = hc / hc.max()
-        maxv = hc.max() if hc.size else 0.0
-        count_eigen_attempts += 1
-        if np.mean(hc) > 0 and maxv > 0:
-            eigen_search_failed = False
+
+    if approx:
+        if logger:
+            logger.debug("Using approximate largest eigenvalue computation for hub centrality")
+        eigenval, eigenvec = approximate_largest_eigenvalue(
+            AA, alpha=1.0, cval=approx_args.get("cval", eps),
+            maxiter=approx_args.get("maxiter", 1000),
+            tol=approx_args.get("tol", 1e-6))
+    else:
+        eigenval, eigenvec = get_largest_real_eigenvalue(AA, logger=logger)
+
+    eigenvec = np.abs(np.asarray(np.real_if_close(eigenvec), dtype=np.float64))
+    hc = eigenvec.reshape((l, n)).sum(axis=0)
+    maxv = hc.max() if hc.size else 0.0
+    hc = (
+        np.zeros_like(hc, dtype=np.float32)
+        if maxv == 0
+        else (hc / maxv).astype(np.float32)
+    )
 
     if logger and logger.isEnabledFor(logging.DEBUG):
-        logger.debug("Hub with attempts %d: lambda_max=%.6g, and maxv=%.4g min/mean/max=%.4g/%.4g/%.4g",
-                     count_eigen_attempts, eigenval, maxv, hc.min(), hc.mean(), hc.max())
+        logger.debug(
+            "Hub: lambda_max=%.6g, min/mean/max=%.4g/%.4g/%.4g",
+            eigenval, hc.min(), hc.mean(), hc.max(),
+        )
     return hc
 
 
@@ -726,11 +807,8 @@ def compute_multi_authority_centrality(
     Compute multi-layer authority centrality using the dominant eigenvector of A^T * A.
 
     Solves by scipy.sparse.linalg.eigs (exact) or by power iteration if approx=True.
-
-    N.B. The retry loop (max_attempts) exists because scipy.sparse.linalg.eigs
-    (ARPACK) uses random initialization and can return degenerate eigenvectors
-    on small or very sparse supra-matrices. The approximate path (power
-    iteration with eps perturbation) is deterministic and does not need retries.
+    The exact path uses a fixed positive starting vector to select a
+    deterministic balanced projection across tied components.
 
     Parameters
     ----------
@@ -741,9 +819,11 @@ def compute_multi_authority_centrality(
     l : int
         Number of layers.
     eps : float
-        Small value added for Perron-Frobenius uniqueness.
+        Positive perturbation used by the approximate solver. The exact
+        deterministic solver does not require it.
     max_attempts : int
-        Max eigenvalue search retries (relevant for exact path only).
+        Retained for backward compatibility. The deterministic solver performs
+        one attempt.
     approx : bool
         Use approximate eigenvalue computation via power iteration.
     approx_args : dict, optional
@@ -755,34 +835,43 @@ def compute_multi_authority_centrality(
     np.ndarray
         Max-normalized authority centrality per physical node, shape (n,).
     """
+    NL = n * l
+    if not sps.isspmatrix(adj):
+        raise TypeError("adj must be a SciPy sparse matrix")
+    if adj.shape != (NL, NL):
+        raise ValueError(f"Adjacency matrix shape {adj.shape} != ({NL}, {NL})")
+    if NL == 0:
+        return np.empty(0, dtype=np.float32)
+
     AAT = adj.T.dot(adj).astype(np.float64)
-    AAT.data += eps
     if approx and approx_args is None:
         approx_args = {"maxiter": 1000, "tol": 1e-6}
 
-    eigen_search_failed = True
-    count_eigen_attempts = 0
-    while eigen_search_failed and count_eigen_attempts < max_attempts:
-        if approx:
-            if logger:
-                logger.debug("Using approximate largest eigenvalue computation for authority centrality")
-            eigenval, eigenvec = approximate_largest_eigenvalue(
-                AAT, alpha=1.0, cval=approx_args.get("cval", eps),
-                maxiter=approx_args.get("maxiter", 1000),
-                tol=approx_args.get("tol", 1e-6))
-        else:
-            eigenval, eigenvec = get_largest_real_eigenvalue(AAT, logger=logger)
-        X = np.reshape(eigenvec, (n, l), order="F")
-        authority_centrality = X.sum(axis=1)
-        maxv = authority_centrality.max() if authority_centrality.size else 0.0
-        ac = np.zeros_like(authority_centrality, dtype=np.float32) if maxv == 0 else (authority_centrality / maxv).astype(np.float32)
-        count_eigen_attempts += 1
-        if np.mean(ac) > 0 and maxv > 0:
-            eigen_search_failed = False
+    if approx:
+        if logger:
+            logger.debug("Using approximate largest eigenvalue computation for authority centrality")
+        eigenval, eigenvec = approximate_largest_eigenvalue(
+            AAT, alpha=1.0, cval=approx_args.get("cval", eps),
+            maxiter=approx_args.get("maxiter", 1000),
+            tol=approx_args.get("tol", 1e-6))
+    else:
+        eigenval, eigenvec = get_largest_real_eigenvalue(AAT, logger=logger)
+
+    eigenvec = np.abs(np.asarray(np.real_if_close(eigenvec), dtype=np.float64))
+    X = np.reshape(eigenvec, (n, l), order="F")
+    authority_centrality = X.sum(axis=1)
+    maxv = authority_centrality.max() if authority_centrality.size else 0.0
+    ac = (
+        np.zeros_like(authority_centrality, dtype=np.float32)
+        if maxv == 0
+        else (authority_centrality / maxv).astype(np.float32)
+    )
 
     if logger and logger.isEnabledFor(logging.DEBUG):
-        logger.debug("Authority with attempts %d: lambda_max=%.6g, min/mean/max=%.4g/%.4g/%.4g",
-                     count_eigen_attempts, eigenval, ac.min(), ac.mean(), ac.max())
+        logger.debug(
+            "Authority: lambda_max=%.6g, min/mean/max=%.4g/%.4g/%.4g",
+            eigenval, ac.min(), ac.mean(), ac.max(),
+        )
     return ac
 
 
@@ -792,7 +881,8 @@ def compute_multi_authority_centrality(
 
 def get_multi_degree(
     supra: sps.spmatrix, layers: int, nodes: int,
-    is_directed: bool = True, backend: str = "muxvizpy",
+    is_directed: bool | None = None,
+    backend: Literal["muxvizpy", "hornet"] = "muxvizpy",
     logger: Optional[logging.Logger] = None,
 ) -> np.ndarray:
     """
@@ -806,8 +896,10 @@ def get_multi_degree(
         Number of layers.
     nodes : int
         Number of physical nodes.
-    is_directed : bool
-        If True, returns in + out degree. If False, returns (in + out) / 2.
+    is_directed : bool, optional
+        For the ``"hornet"`` backend, True returns in + out degree and False
+        returns half that value. The default is True. This argument does not
+        apply to the ``"muxvizpy"`` aggregate-degree definition.
     backend : str
         "muxvizpy" (aggregate network column sum) or "hornet" (in + out on
         intra-layer blocks, matching muxViz R semantics).
@@ -818,8 +910,24 @@ def get_multi_degree(
     np.ndarray
         Degree vector for physical nodes (aggregated across layers).
     """
+    if backend not in {"muxvizpy", "hornet"}:
+        raise ValueError(
+            f"Unknown backend {backend!r}; expected 'muxvizpy' or 'hornet'"
+        )
     if backend == "hornet":
-        return compute_multi_degree(supra, nodes, layers, is_directed=is_directed, logger=logger)
+        directed = True if is_directed is None else is_directed
+        return compute_multi_degree(
+            supra,
+            nodes,
+            layers,
+            is_directed=directed,
+            logger=logger,
+        )
+    if is_directed is not None:
+        raise ValueError(
+            "is_directed applies only to backend='hornet'; "
+            "the 'muxvizpy' backend uses aggregate degree"
+        )
     tensor = parsing_utils.build_edge_colored_matrices_from_supra_adjacency_matrix(supra, layers)
     agg_mat = parsing_utils.get_aggregate_network(tensor, return_mat=True)
     centrality_vector = np.array(agg_mat.sum(axis=0)).ravel()
@@ -862,11 +970,24 @@ def get_multi_RW_centrality_edge_colored(node_tensor: list[sps.spmatrix], cval: 
     supra_transition = supra_transition[nonzero_idx]
     supra_transition = supra_transition[:,nonzero_idx]
     #compute the leading eigenvector with the approximation methos
-    eig,pr_v = approx_utils.leading_eigenv_approx(supra_transition.T, max_iter=10000, tol=1e-8, cval=0.15)
+    eig,pr_v = approx_utils.leading_eigenv_approx(
+        supra_transition.T,
+        max_iter=10000,
+        tol=1e-8,
+        cval=cval,
+    )
     #aggregate by summing together probabilities corresponding to the same physical node to have the final result
-    res_df = pd.DataFrame({"phy nodes": nonzero_idx-((nonzero_idx//nodes)*nodes), "vers": pr_v/max(pr_v)})
-
-    return res_df.groupby("phy nodes").aggregate(sum).reset_index()
+    res_df = pd.DataFrame(
+        {
+            "phy nodes": nonzero_idx - ((nonzero_idx // nodes) * nodes),
+            "vers": pr_v,
+        }
+    )
+    result = res_df.groupby("phy nodes").aggregate(sum).reset_index()
+    max_value = result["vers"].max()
+    if max_value > 0:
+        result["vers"] /= max_value
+    return result
 
 def get_multi_Kcore_centrality(supra: sps.spmatrix, layers: int, nodes: int):
     """
@@ -890,10 +1011,11 @@ def get_multi_Kcore_centrality(supra: sps.spmatrix, layers: int, nodes: int):
     kcore_table = np.zeros([nodes,layers])
     nodes_tensor = parsing_utils.build_edge_colored_matrices_from_supra_adjacency_matrix(supra, layers)
 
-    for l in range(layers):
-        g_tmp = gt.Graph(directed=False)
-        g_tmp.add_edge_list(np.transpose(nodes_tensor[l].nonzero()))
-        kcore_table[:,l] = gt.topology.kcore_decomposition(g_tmp).get_array()
+    for layer in range(layers):
+        g_tmp = parsing_utils._graph_from_sparse(nodes_tensor[layer])
+        kcore_table[:, layer] = (
+            gt.topology.kcore_decomposition(g_tmp).get_array()
+        )
 
     centrality_vector = np.min(kcore_table, axis=1)
     return centrality_vector

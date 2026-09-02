@@ -7,24 +7,28 @@ Classes:
     TestLaplacianAndDensity  — Laplacian L = D - A and density tr(ρ) = 1
 """
 
-import pytest
 import numpy as np
 import polars as pl
+import pytest
 import scipy.sparse as sp
 import torch
-
-from MuxVizPy.utils import parsing
 from conftest import (
     SAMPLE_EDGES,
-    SAMPLE_N_NODES,
     SAMPLE_N_LAYERS,
-    assert_arrays_close,
+    SAMPLE_N_NODES,
 )
 
+from MuxVizPy.utils import parsing
 
 N = SAMPLE_N_NODES
 L = SAMPLE_N_LAYERS
 NL = N * L
+
+
+@pytest.fixture
+def sample_undirected_adjacency(sample_adjacency):
+    """Undirected form of the directed conversion fixture for BGS density tests."""
+    return sample_adjacency.maximum(sample_adjacency.T).tocsr()
 
 
 # ============================================================================
@@ -131,6 +135,7 @@ class TestParsingCorrectness:
             torch.tensor([[0], [1]]),
             torch.tensor([1.0]),
             size=(3, 3),
+            check_invariants=True,
         )
         with pytest.raises(ValueError):
             parsing.build_supra_adjacency_matrix_from_tensor(t)
@@ -147,6 +152,57 @@ class TestParsingCorrectness:
 
 class TestTransitionMatrix:
     """Properties of the classical and PageRank transition matrices."""
+
+    def test_virus_transition_preserves_actual_edges(self):
+        layer0 = sp.csr_matrix([[0, 1], [0, 0]], dtype=float)
+        layer1 = sp.csr_matrix([[0, 0], [1, 0]], dtype=float)
+        supra = sp.block_diag([layer0, layer1], format="lil")
+        supra[0, 2] = 1.0
+        supra[2, 0] = 1.0
+        supra = supra.tocsr()
+
+        transition = parsing.create_supra_transition_matrix_virus(
+            supra,
+            [layer0, layer1],
+            nodes=2,
+            layers=2,
+            p_intra=3.0,
+        ).tocsr()
+
+        np.testing.assert_array_equal(
+            transition.toarray() != 0.0,
+            supra.toarray() != 0.0,
+        )
+        np.testing.assert_allclose(
+            np.asarray(transition.sum(axis=1)).ravel(),
+            [1.0, 0.0, 1.0, 1.0],
+        )
+        assert transition[0, 1] == pytest.approx(0.75)
+        assert transition[0, 2] == pytest.approx(0.25)
+
+    def test_empty_network_has_empty_virus_transition(self):
+        supra = sp.csr_matrix((3, 3), dtype=float)
+        layers = [sp.csr_matrix((1, 1), dtype=float) for _ in range(3)]
+
+        transition = parsing.create_supra_transition_matrix_virus(
+            supra, layers, nodes=1, layers=3
+        ).tocsr()
+
+        assert transition.shape == supra.shape
+        assert transition.nnz == 0
+
+    @pytest.mark.parametrize("p_intra", [-1.0, np.inf, np.nan])
+    def test_virus_transition_rejects_invalid_intralayer_weight(
+        self, p_intra
+    ):
+        with pytest.raises(ValueError, match="p_intra"):
+            parsing.create_supra_transition_matrix_virus(
+                sp.csr_matrix((1, 1)),
+                [sp.csr_matrix((1, 1))],
+                nodes=1,
+                layers=1,
+                p_intra=p_intra,
+            )
 
     def test_classical_row_stochastic(self, sample_adjacency, n_nodes, n_layers):
         T = parsing.build_transition_matrix_from_adjacency_matrix(
@@ -183,8 +239,9 @@ class TestTransitionMatrix:
         )
         assert T.min() >= 0.0
 
-    def test_pagerank_scaled_by_alpha(self, sample_adjacency, n_nodes, n_layers):
-        """PageRank = alpha * classical for rows with outgoing edges."""
+    def test_pagerank_includes_teleportation_and_dangling_mass(
+        self, sample_adjacency, n_nodes, n_layers
+    ):
         alpha = 0.85
         T_class = parsing.build_transition_matrix_from_adjacency_matrix(
             sample_adjacency, n_nodes, n_layers, kind="classical"
@@ -192,8 +249,17 @@ class TestTransitionMatrix:
         T_pr = parsing.build_transition_matrix_from_adjacency_matrix(
             sample_adjacency, n_nodes, n_layers, kind="pagerank", alpha=alpha
         )
-        diff = (T_pr - T_class.multiply(alpha)).tocsr()
-        assert abs(diff).max() < 1e-10
+
+        expected = alpha * T_class.toarray()
+        expected += (1.0 - alpha) / NL
+        dangling = np.asarray(T_class.sum(axis=1)).ravel() == 0.0
+        expected[dangling] += alpha / NL
+
+        np.testing.assert_allclose(T_pr.toarray(), expected)
+        np.testing.assert_allclose(
+            np.asarray(T_pr.sum(axis=1)).ravel(),
+            np.ones(NL),
+        )
 
     def test_pagerank_invalid_alpha_raises(self, sample_adjacency, n_nodes, n_layers):
         with pytest.raises(ValueError):
@@ -249,14 +315,20 @@ class TestLaplacianAndDensity:
         L = parsing.build_laplacian_matrix_from_adjacency_matrix(sample_adjacency)
         assert L.shape == sample_adjacency.shape
 
-    def test_density_trace_one(self, sample_adjacency):
-        rho = parsing.build_density_bgs_from_adjacency_matrix(sample_adjacency)
+    def test_density_trace_one(self, sample_undirected_adjacency):
+        rho = parsing.build_density_bgs_from_adjacency_matrix(
+            sample_undirected_adjacency
+        )
         assert rho.diagonal().sum() == pytest.approx(1.0, abs=1e-12)
 
-    def test_density_diagonal_nonnegative(self, sample_adjacency):
-        rho = parsing.build_density_bgs_from_adjacency_matrix(sample_adjacency)
+    def test_density_diagonal_nonnegative(self, sample_undirected_adjacency):
+        rho = parsing.build_density_bgs_from_adjacency_matrix(
+            sample_undirected_adjacency
+        )
         assert np.all(rho.diagonal() >= 0.0)
 
-    def test_density_shape(self, sample_adjacency):
-        rho = parsing.build_density_bgs_from_adjacency_matrix(sample_adjacency)
-        assert rho.shape == sample_adjacency.shape
+    def test_density_shape(self, sample_undirected_adjacency):
+        rho = parsing.build_density_bgs_from_adjacency_matrix(
+            sample_undirected_adjacency
+        )
+        assert rho.shape == sample_undirected_adjacency.shape

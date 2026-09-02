@@ -14,6 +14,10 @@ try:
 except ImportError:
     torch = None
 
+# Categorical coupling is materialized explicitly in several temporary arrays.
+# Keep its entry count bounded before allocating those arrays.
+MAX_CATEGORICAL_COUPLING_EDGES = 1_000_000
+
 
 def _require_torch():
     if torch is None:
@@ -37,13 +41,33 @@ def build_interlayer_coupling_from_tensor(t: torch.Tensor, omega: float, kind: s
         A sparse tensor of shape (num_nodes, num_layers, num_nodes, num_layers)
             representing the interlayer coupling.
     """
+    _require_torch()
     kind = kind.lower().strip()
-    n, l = t.shape[0], t.shape[1]
-    if len(t.shape) != 4 or t.shape[0] != n or t.shape[2] != n or t.shape[1] != l or t.shape[3] != l:
-        raise ValueError("Input tensor must have shape (num_nodes, num_layers, num_nodes, num_layers).")
     if not t.is_sparse:
         raise NotImplementedError("Input tensor must be a sparse tensor.")
-    
+
+    if (
+        len(t.shape) != 4
+        or t.shape[0] != t.shape[2]
+        or t.shape[1] != t.shape[3]
+    ):
+        raise ValueError(
+            "Input tensor must have shape "
+            "(num_nodes, num_layers, num_nodes, num_layers)."
+        )
+
+    n, l = t.shape[0], t.shape[1]
+    if kind not in {"ordered", "categorical", "temporal"}:
+        raise NotImplementedError(f"Unknown coupling type: {kind}")
+    if n == 0 or l <= 1:
+        return torch.sparse_coo_tensor(
+            torch.empty((4, 0), dtype=torch.long),
+            torch.empty((0,), dtype=torch.float32),
+            size=(n, l, n, l),
+            dtype=torch.float32,
+            check_invariants=True,
+        ).coalesce()
+
     if kind == "ordered":
         # Vectorized version for chain coupling (undirected)
         rows = np.arange(n)
@@ -65,11 +89,12 @@ def build_interlayer_coupling_from_tensor(t: torch.Tensor, omega: float, kind: s
 
     elif kind == "categorical":
         # All-to-all undirected coupling: node j in layer i ↔ node j in layer k, for all i ≠ k
-        assert n * l < 10000, (
-            "Too many edges for categorical coupling; "
-            "consider using a smaller network or a different coupling type. "
-            "Consider using only a layer-by-layer coupling and handle it as layer couples."
-        )
+        edge_count = n * l * (l - 1)
+        if edge_count > MAX_CATEGORICAL_COUPLING_EDGES:
+            raise ValueError(
+                f"categorical coupling requires {edge_count:,} entries; "
+                f"limit is {MAX_CATEGORICAL_COUPLING_EDGES:,}"
+            )
 
         # For each node, create all (layer_from, layer_to) pairs with layer_from != layer_to
         nodes = np.arange(n)
@@ -101,14 +126,12 @@ def build_interlayer_coupling_from_tensor(t: torch.Tensor, omega: float, kind: s
         indices = torch.tensor(indices, dtype=torch.long).t().contiguous()
         values = torch.full((indices.shape[1],), omega, dtype=torch.float32)
 
-    else:
-        raise NotImplementedError(f"Unknown coupling type: {kind}")
-    
     t_coupling = torch.sparse_coo_tensor(
         indices,
         values,
         size=(n, l, n, l),
         dtype=torch.float32,
+        check_invariants=True,
     )
     t_coupling = t_coupling.coalesce()
     return t_coupling
@@ -162,6 +185,34 @@ def build_supra_adjacency_matrix_from_edge_colored_matrices(intra_networks: list
     t += sp.kron(layer_coupling_matrix, identity, format="csr")
     return t
 
+
+def _validate_supra_shape(
+    supra: sp.spmatrix,
+    num_layers: int,
+    num_nodes: int | None = None,
+) -> int:
+    """Validate a supra-matrix shape and return its physical-node count."""
+    if num_layers <= 0:
+        raise ValueError("num_layers must be positive")
+    if supra.shape[0] != supra.shape[1]:
+        raise ValueError(
+            f"Supra-adjacency matrix must be square, got shape {supra.shape}"
+        )
+    if supra.shape[0] % num_layers != 0:
+        raise ValueError(
+            f"Supra-adjacency matrix order {supra.shape[0]} must be "
+            f"divisible by num_layers={num_layers}"
+        )
+
+    inferred_nodes = int(supra.shape[0] // num_layers)
+    if num_nodes is not None and inferred_nodes != num_nodes:
+        raise ValueError(
+            f"Supra-adjacency matrix shape {supra.shape} does not match "
+            f"num_layers={num_layers} and num_nodes={num_nodes}"
+        )
+    return inferred_nodes
+
+
 def build_edge_colored_matrices_from_supra_adjacency_matrix(supra_adj: sp.csr_matrix, num_layers: int) -> list[sp.csr_matrix]:
     """
     Retrieve the block diagonal intralayer adjacency matrices and the interlayer coupling matrix from a supra-adjacency matrix.
@@ -172,7 +223,7 @@ def build_edge_colored_matrices_from_supra_adjacency_matrix(supra_adj: sp.csr_ma
     Returns:
         intra_networks: List of sparse adjacency matrices for each layer (shape: num_nodes x num_nodes).
     """
-    num_nodes = supra_adj.shape[0] // num_layers
+    num_nodes = _validate_supra_shape(supra_adj, num_layers)
     intra_networks = []
     for i in range(num_layers):
         start = i * num_nodes
@@ -180,15 +231,67 @@ def build_edge_colored_matrices_from_supra_adjacency_matrix(supra_adj: sp.csr_ma
         intra_networks.append(supra_adj[start:end, start:end].tocsr())
     return intra_networks
 
-def get_node_tensor_from_network_list(glist: list[gt.Graph]) -> list[sp.spmatrix]:
+def _adjacency_from_graph(
+    graph: gt.Graph,
+    weight: str | None = None,
+) -> sp.spmatrix:
+    """Return source-by-target adjacency with an optional edge weight."""
+    property_name = weight
+    if property_name is None and "weight" in graph.ep:
+        property_name = "weight"
+
+    if property_name is None:
+        weight_property = None
+    else:
+        if property_name not in graph.ep:
+            raise ValueError(
+                f"Graph has no edge property named {property_name!r}"
+            )
+        weight_property = graph.ep[property_name]
+
+    # graph-tool stores adjacency coordinates as (target, source), while
+    # MuxVizPy matrices and tensors use (source, target).
+    return gt.spectral.adjacency(graph, weight=weight_property).transpose().tocsr()
+
+
+def get_node_tensor_from_network_list(
+    glist: list[gt.Graph],
+    weight: str | None = None,
+) -> list[sp.spmatrix]:
     """
     Convert a list of graph-tool graphs to their scipy sparse adjacency matrices.
     Args:
         glist: List of graph-tool Graph objects, one per layer.
+        weight: Edge-property name to preserve. If omitted, a property named
+            ``"weight"`` is used when present.
     Returns:
         List of scipy sparse adjacency matrices, one per layer.
     """
-    return [gt.spectral.adjacency(g) for g in glist]
+    return [_adjacency_from_graph(graph, weight) for graph in glist]
+
+
+def _graph_from_sparse(
+    adjacency: sp.spmatrix,
+    *,
+    directed: bool = False,
+) -> gt.Graph:
+    """Build a graph while preserving matrix size and simple-edge semantics."""
+    if adjacency.shape[0] != adjacency.shape[1]:
+        raise ValueError(
+            f"Adjacency matrix must be square, got shape {adjacency.shape}"
+        )
+
+    rows, columns = adjacency.nonzero()
+    edges = np.column_stack((rows, columns))
+    if not directed and edges.size:
+        edges.sort(axis=1)
+        edges = np.unique(edges, axis=0)
+
+    graph = gt.Graph(directed=directed)
+    graph.add_vertex(adjacency.shape[0])
+    graph.add_edge_list(edges)
+    return graph
+
 
 def supra_adjacency_to_network_list(supra: sp.spmatrix, num_layers: int, num_nodes: int) -> list[gt.Graph]:
     """
@@ -200,19 +303,21 @@ def supra_adjacency_to_network_list(supra: sp.spmatrix, num_layers: int, num_nod
     Returns:
         List of graph-tool Graph objects, one per layer.
     """
+    _validate_supra_shape(supra, num_layers, num_nodes)
     intra_networks = build_edge_colored_matrices_from_supra_adjacency_matrix(supra, num_layers)
-    graphs = []
-    for adj in intra_networks:
-        g = gt.Graph(directed=False)
-        g.add_edge_list(np.transpose(adj.nonzero()))
-        graphs.append(g)
-    return graphs
+    return [_graph_from_sparse(adjacency) for adjacency in intra_networks]
 
-def build_tensor_from_list_of_graphs(glist: list[gt.Graph]) -> torch.Tensor:
+
+def build_tensor_from_list_of_graphs(
+    glist: list[gt.Graph],
+    weight: str | None = None,
+) -> torch.Tensor:
     """
     Build a tensor from a list of Graphs representing the layers of a multi-layer network.
     Args:
         glist: List of Graphs representing the layers of the multi-layer network. Each graph should have the same number of nodes.
+        weight: Edge-property name to preserve. If omitted, a property named
+            ``"weight"`` is used when present.
     Returns:
         A sparse tensor of shape (num_nodes, num_layers, num_nodes, num_layers) representing the multi-layer network.
     """
@@ -229,9 +334,14 @@ def build_tensor_from_list_of_graphs(glist: list[gt.Graph]) -> torch.Tensor:
     indices_list = []
     values_list = []
     for layer_from, g in enumerate(glist):
-        adj = gt.spectral.adjacency(g)
+        adj = _adjacency_from_graph(g, weight)
         adj = adj.tocoo()
-        for node_from, node_to, value in zip(adj.row, adj.col, adj.data):
+        for node_from, node_to, value in zip(
+            adj.row,
+            adj.col,
+            adj.data,
+            strict=True,
+        ):
             indices_list.append([node_from, layer_from, node_to, layer_from])
             values_list.append(float(value))
 
@@ -242,6 +352,7 @@ def build_tensor_from_list_of_graphs(glist: list[gt.Graph]) -> torch.Tensor:
             torch.empty((0,), dtype=torch.float32),
             size=(num_nodes, num_layers, num_nodes, num_layers),
             dtype=torch.float32,
+            check_invariants=True,
         )
 
     indices = torch.tensor(indices_list, dtype=torch.long).t().contiguous()
@@ -252,9 +363,21 @@ def build_tensor_from_list_of_graphs(glist: list[gt.Graph]) -> torch.Tensor:
         values,
         size=(num_nodes, num_layers, num_nodes, num_layers),
         dtype=torch.float32,
+        check_invariants=True,
     )
     t = t.coalesce()
     return t
+
+
+def _nonzero_tensor_entries(
+    tensor: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return coalesced tensor indices and values with stored zeros removed."""
+    tensor = tensor.coalesce()
+    values = tensor.values()
+    mask = values != 0
+    return tensor.indices()[:, mask], values[mask]
+
 
 def build_aggregate_network_from_tensor(t: torch.Tensor, kind="sum") -> sp.csr_matrix:
     """
@@ -268,9 +391,7 @@ def build_aggregate_network_from_tensor(t: torch.Tensor, kind="sum") -> sp.csr_m
 
     if kind == "sum":
         # Sum over layers: A_agg[i, j] = sum_{k, l} t[i, k, j, l]
-        agg = t.coalesce()
-        indices = agg.indices()
-        values = agg.values()
+        indices, values = _nonzero_tensor_entries(t)
 
         # Create a dictionary to accumulate sums for each (i, j) pair
         from collections import defaultdict
@@ -289,12 +410,15 @@ def build_aggregate_network_from_tensor(t: torch.Tensor, kind="sum") -> sp.csr_m
             data.append(weight)
 
         num_nodes = t.shape[0]
-        return sp.coo_matrix((data, (row, col)), shape=(num_nodes, num_nodes)).tocsr()
+        matrix = sp.coo_matrix(
+            (data, (row, col)),
+            shape=(num_nodes, num_nodes),
+        ).tocsr()
+        matrix.eliminate_zeros()
+        return matrix
     elif kind == "max":
         # Max over layers: A_agg[i, j] = max_{k, l} t[i, k, j, l]
-        agg = t.coalesce()
-        indices = agg.indices()
-        values = agg.values()
+        indices, values = _nonzero_tensor_entries(t)
 
         # Create a dictionary to keep track of the max weight for each (i, j) pair
         edge_dict = {}
@@ -314,12 +438,15 @@ def build_aggregate_network_from_tensor(t: torch.Tensor, kind="sum") -> sp.csr_m
             data.append(weight)
 
         num_nodes = t.shape[0]
-        return sp.coo_matrix((data, (row, col)), shape=(num_nodes, num_nodes)).tocsr()
+        matrix = sp.coo_matrix(
+            (data, (row, col)),
+            shape=(num_nodes, num_nodes),
+        ).tocsr()
+        matrix.eliminate_zeros()
+        return matrix
     elif kind == "min":
         # Min over layers: A_agg[i, j] = min_{k, l} t[i, k, j, l]
-        agg = t.coalesce()
-        indices = agg.indices()
-        values = agg.values()
+        indices, values = _nonzero_tensor_entries(t)
 
         # Create a dictionary to keep track of the min weight for each (i, j) pair
         edge_dict = {}
@@ -339,43 +466,100 @@ def build_aggregate_network_from_tensor(t: torch.Tensor, kind="sum") -> sp.csr_m
             data.append(weight)
 
         num_nodes = t.shape[0]
-        return sp.coo_matrix((data, (row, col)), shape=(num_nodes, num_nodes)).tocsr()
+        matrix = sp.coo_matrix(
+            (data, (row, col)),
+            shape=(num_nodes, num_nodes),
+        ).tocsr()
+        matrix.eliminate_zeros()
+        return matrix
     else:
         raise ValueError(f"Unknown aggregation kind: {kind}")
     
-def build_list_of_graphs_from_tensor(t: torch.Tensor) -> list[gt.Graph]:
+def build_list_of_graphs_from_tensor(
+    t: torch.Tensor,
+    *,
+    directed: bool = True,
+) -> list[gt.Graph]:
     """
     Build a list of Graphs from a tensor of sparse interactions.
     Args:
         t: A sparse tensor of shape (num_nodes, num_layers, num_nodes, num_layers)
             representing the multi-layer network.
+        directed: Whether to create directed graphs. Tensor coordinates cannot
+            distinguish an undirected edge from two reciprocal directed edges,
+            so callers must select the intended graph type.
     Returns:
-        A list of Graphs representing the layers of the multi-layer network. Each graph will have the same number of nodes.
+        A list of Graphs representing the layers of the multi-layer network.
+        Cross-layer interactions are excluded. Each graph has the same number
+        of nodes and a ``"weight"`` edge property.
     """
     _require_torch()
     if not t.is_sparse:
         raise NotImplementedError("Input tensor must be a sparse tensor.")
-    
-    n, l = t.shape[0], t.shape[1]
-    if len(t.shape) != 4 or t.shape[0] != n or t.shape[2] != n or t.shape[1] != l or t.shape[3] != l:
-        raise ValueError("Input tensor must have shape (num_nodes, num_layers, num_nodes, num_layers).")
 
-    t = t.coalesce()
-    indices = t.indices()
-    values = t.values()
+    if (
+        len(t.shape) != 4
+        or t.shape[0] != t.shape[2]
+        or t.shape[1] != t.shape[3]
+    ):
+        raise ValueError(
+            "Input tensor must have shape "
+            "(num_nodes, num_layers, num_nodes, num_layers)."
+        )
 
-    # Create a list of adjacency matrices for each layer
-    adj_matrices = [sp.lil_matrix((n, n)) for _ in range(l)]
+    n, num_layers = t.shape[0], t.shape[1]
+    indices, values = _nonzero_tensor_entries(t)
+
+    directed_edges: list[list[tuple[int, int, float]]] = [
+        [] for _ in range(num_layers)
+    ]
+    undirected_edges: list[dict[tuple[int, int], float]] = [
+        {} for _ in range(num_layers)
+    ]
+
     for idx in range(indices.shape[1]):
-        i, k, j, l_ = indices[:, idx]
-        weight = values[idx].item()
-        adj_matrices[k][i, j] = weight
+        node_from, layer_from, node_to, layer_to = (
+            int(value.item()) for value in indices[:, idx]
+        )
+        if layer_from != layer_to:
+            continue
 
-    # Convert adjacency matrices to Graphs
-    graphs = []
-    for adj in adj_matrices:
-        g = gt.Graph(adj.tocsr())
-        graphs.append(g)
+        edge_weight = float(values[idx].item())
+        if directed:
+            directed_edges[layer_from].append(
+                (node_from, node_to, edge_weight)
+            )
+            continue
+
+        edges = undirected_edges[layer_from]
+        edge = tuple(sorted((node_from, node_to)))
+        if edge in edges and not np.isclose(edges[edge], edge_weight):
+            raise ValueError(
+                "Reciprocal tensor entries must have equal weights when "
+                "building undirected graphs."
+            )
+        edges[edge] = edge_weight
+
+    graphs: list[gt.Graph] = []
+    for layer in range(num_layers):
+        graph = gt.Graph(directed=directed)
+        graph.add_vertex(n)
+        weight_property = graph.new_edge_property("double")
+
+        entries = (
+            directed_edges[layer]
+            if directed
+            else [
+                (source, target, weight)
+                for (source, target), weight in undirected_edges[layer].items()
+            ]
+        )
+        for source, target, edge_weight in entries:
+            edge = graph.add_edge(source, target)
+            weight_property[edge] = edge_weight
+
+        graph.ep["weight"] = weight_property
+        graphs.append(graph)
 
     return graphs
 
@@ -397,38 +581,60 @@ def build_laplacian_from_tensor(t: torch.Tensor) -> torch.Tensor:
     if len(t.shape) != 4 or t.shape[0] != n or t.shape[2] != n or t.shape[1] != l or t.shape[3] != l:
         raise ValueError("Input tensor must have shape (num_nodes, num_layers, num_nodes, num_layers).")
 
-    t = t.coalesce()
-    indices = t.indices()
-    values = t.values()
+    indices, values = _nonzero_tensor_entries(t)
 
     # Create a dictionary to accumulate the degree for each node-layer pair
-    degree_dict = {}
+    degree_dict: dict[tuple[int, int], float] = {}
     for idx in range(indices.shape[1]):
         i, k, j, l_ = indices[:, idx]
         weight = values[idx].item()
         degree_dict[(i.item(), k.item())] = degree_dict.get((i.item(), k.item()), 0.0) + weight
 
     # Create the Laplacian entries
-    laplacian_indices = []
-    laplacian_values = []
+    laplacian_index_rows: list[list[int]] = []
+    laplacian_value_rows: list[float] = []
     for idx in range(indices.shape[1]):
         i, k, j, l_ = indices[:, idx]
         weight = values[idx].item()
-        laplacian_indices.append([i.item(), k.item(), j.item(), l_.item()])
-        laplacian_values.append(-weight)
+        laplacian_index_rows.append(
+            [i.item(), k.item(), j.item(), l_.item()]
+        )
+        laplacian_value_rows.append(-weight)
 
     for (i, k), degree in degree_dict.items():
-        laplacian_indices.append([i, k, i, k])
-        laplacian_values.append(degree)
+        laplacian_index_rows.append([i, k, i, k])
+        laplacian_value_rows.append(degree)
 
-    laplacian_indices = torch.tensor(laplacian_indices, dtype=torch.long).t().contiguous()
-    laplacian_values = torch.tensor(laplacian_values, dtype=torch.float32)
+    if laplacian_index_rows:
+        laplacian_indices = torch.tensor(
+            laplacian_index_rows,
+            dtype=torch.long,
+            device=t.device,
+        ).t().contiguous()
+        laplacian_values = torch.tensor(
+            laplacian_value_rows,
+            dtype=t.dtype,
+            device=t.device,
+        )
+    else:
+        laplacian_indices = torch.empty(
+            (4, 0),
+            dtype=torch.long,
+            device=t.device,
+        )
+        laplacian_values = torch.empty(
+            (0,),
+            dtype=t.dtype,
+            device=t.device,
+        )
 
     laplacian = torch.sparse_coo_tensor(
         laplacian_indices,
         laplacian_values,
         size=(n, l, n, l),
-        dtype=torch.float32,
+        dtype=t.dtype,
+        device=t.device,
+        check_invariants=True,
     )
     laplacian = laplacian.coalesce()
     return laplacian
@@ -487,6 +693,7 @@ def build_tensor_from_dataframe(df):
         values,
         size=(n, l, n, l),
         dtype=torch.float32,
+        check_invariants=True,
     )
     t = t.coalesce()
     return t
@@ -508,18 +715,15 @@ def build_edgelist_from_tensor(t):
     n, l = t.shape[0], t.shape[1]
     if len(t.shape) != 4 or t.shape[0] != n or t.shape[2] != n or t.shape[1] != l or t.shape[3] != l:
         raise ValueError("Input tensor must have shape (num_nodes, num_layers, num_nodes, num_layers).")
-    t = t.coalesce()
-
-    indices = t.indices()
-    values = t.values()
+    indices, values = _nonzero_tensor_entries(t)
 
     edge_list = pl.DataFrame(
         {
-            "node.from": indices[0].to(torch.int32).numpy(),
-            "layer.from": indices[1].to(torch.int32).numpy(),
-            "node.to": indices[2].to(torch.int32).numpy(),
-            "layer.to": indices[3].to(torch.int32).numpy(),
-            "weight": values.numpy(),
+            "node.from": indices[0].to(torch.int32).detach().cpu().numpy(),
+            "layer.from": indices[1].to(torch.int32).detach().cpu().numpy(),
+            "node.to": indices[2].to(torch.int32).detach().cpu().numpy(),
+            "layer.to": indices[3].to(torch.int32).detach().cpu().numpy(),
+            "weight": values.detach().cpu().numpy(),
         }
     )
     return edge_list
@@ -538,12 +742,16 @@ def build_supra_interaction_matrix_from_tensor(t):
     if len(t.shape) != 4 or t.shape[0] != n or t.shape[2] != n or t.shape[1] != l or t.shape[3] != l:
         raise ValueError("Input tensor must have shape (num_nodes, num_layers, num_nodes, num_layers).")
 
-    t = t.coalesce()
-    indices = t.indices()
+    indices, values = _nonzero_tensor_entries(t)
     row = (indices[1] * n + indices[0]).detach().cpu().numpy()
     col = (indices[3] * n + indices[2]).detach().cpu().numpy()
-    data = t.values().detach().cpu().numpy()
-    return sp.coo_matrix((data, (row, col)), shape=(l*n, l*n)).tocsr()
+    data = values.detach().cpu().numpy()
+    matrix = sp.coo_matrix(
+        (data, (row, col)),
+        shape=(l * n, l * n),
+    ).tocsr()
+    matrix.eliminate_zeros()
+    return matrix
 
 def build_supra_adjacency_matrix_from_tensor(t):
     """
@@ -559,11 +767,13 @@ def build_supra_adjacency_matrix_from_tensor(t):
     if len(t.shape) != 4 or t.shape[0] != n or t.shape[2] != n or t.shape[1] != l or t.shape[3] != l:
         raise ValueError("Input tensor must have shape (num_nodes, num_layers, num_nodes, num_layers).")
 
-    t = t.coalesce()
-    indices = t.indices()
+    indices, _ = _nonzero_tensor_entries(t)
     row = (indices[1] * n + indices[0]).detach().cpu().numpy()
     col = (indices[3] * n + indices[2]).detach().cpu().numpy()
-    return sp.coo_matrix((np.ones_like(row), (row, col)), shape=(l*n, l*n)).tocsr()
+    return sp.coo_matrix(
+        (np.ones_like(row), (row, col)),
+        shape=(l * n, l * n),
+    ).tocsr()
 
 
 def build_tensor_from_supra_adjacency_matrix(a, num_layers, num_nodes):
@@ -581,6 +791,9 @@ def build_tensor_from_supra_adjacency_matrix(a, num_layers, num_nodes):
     if a.shape != (num_layers*num_nodes, num_layers*num_nodes):
         raise ValueError("Input matrix must have shape (num_layers*num_nodes, num_layers*num_nodes).")
 
+    a = a.tocsr()
+    a.sum_duplicates()
+    a.eliminate_zeros()
     a = a.tocoo()
     row = a.row
     col = a.col
@@ -599,6 +812,7 @@ def build_tensor_from_supra_adjacency_matrix(a, num_layers, num_nodes):
         values,
         size=(num_nodes, num_layers, num_nodes, num_layers),
         dtype=torch.float32,
+        check_invariants=True,
     )
     t = t.coalesce()
     return t
@@ -616,8 +830,9 @@ def build_transition_matrix_from_adjacency_matrix(
     Build supra-transition matrix from a supra-adjacency matrix (NL x NL).
 
     Implemented kinds:
-        - 'classical': row-stochastic D^{-1} A; rows with zero out-strength become uniform 1/NL.
-        - 'pagerank': alpha * (row-stochastic) + (1-alpha)/NL; zero rows become uniform 1/NL.
+        - 'classical': row-stochastic D^{-1} A; zero rows remain zero.
+        - 'pagerank': alpha * (row-stochastic) + (1-alpha)/NL; zero
+          rows become uniform 1/NL.
 
     Notes:
         - Teleportation term makes the matrix dense; returned as CSR for consistency.
@@ -648,8 +863,13 @@ def build_transition_matrix_from_adjacency_matrix(
         if not (0.0 < a <= 1.0):
             raise ValueError("alpha must be in (0, 1] for pagerank")
 
-        P = P.multiply(a).tocsr()
-        return P
+        teleportation = np.full(
+            (NL, NL),
+            (1.0 - a) / NL,
+            dtype=np.float64,
+        )
+        teleportation[~nz, :] = 1.0 / NL
+        return (P.multiply(a) + sp.csr_matrix(teleportation)).tocsr()
 
     elif kind == "diffusive":
         raise NotImplementedError("type='diffusive' not implemented yet")
@@ -681,16 +901,38 @@ def build_density_bgs_from_adjacency_matrix(
         adj: sp.csr_matrix,
 ) -> sp.csr_matrix:
     """
-    Build supra-density matrix from a supra-adjacency matrix (NL x NL).
+    Build a BGS density matrix from an undirected adjacency matrix.
 
     Density matrix is defined as rho = L / Tr(L), where L is the Laplacian.
+    The adjacency must be square, real, finite, nonnegative, and symmetric.
     """
     if not sp.isspmatrix_csr(adj):
         adj = adj.tocsr(copy=False)
+    else:
+        adj = adj.copy()
+
+    if adj.shape[0] != adj.shape[1]:
+        raise ValueError(f"Adjacency matrix must be square; got shape {adj.shape}.")
+
+    adj.sum_duplicates()
+    adj.eliminate_zeros()
+    if np.iscomplexobj(adj.data):
+        raise ValueError("BGS density requires real adjacency weights.")
+    if not np.all(np.isfinite(adj.data)):
+        raise ValueError("BGS density requires finite adjacency weights.")
+    if np.any(adj.data < 0):
+        raise ValueError("BGS density requires nonnegative adjacency weights.")
+
+    difference = (adj - adj.T).tocsr()
+    difference.eliminate_zeros()
+    if difference.nnz:
+        raise ValueError(
+            "BGS density requires an undirected symmetric adjacency matrix."
+        )
 
     den = build_laplacian_matrix_from_adjacency_matrix(adj)
     trace = den.diagonal().sum()
-    if trace == 0:
+    if not np.isfinite(trace) or trace <= 0:
         raise ValueError("Adjacency matrix has no edges; Laplacian trace is zero.")
     return den / trace
 
@@ -723,20 +965,19 @@ def get_aggregate_network(
     if obj_type == "glist":
         obj = get_node_tensor_from_network_list(obj)
 
-    agg_mat = sp.coo_matrix(obj[0].shape)
+    agg_mat = sp.csr_matrix(obj[0].shape)
     for layer in obj:
         agg_mat += layer
+    agg_mat.sum_duplicates()
+    agg_mat.eliminate_zeros()
 
     if binarize:
-        agg_mat[agg_mat > 0] = 1
+        agg_mat.data = np.ones(agg_mat.nnz, dtype=np.float64)
 
     if return_mat:
         return agg_mat
 
-    g_agg = gt.Graph(directed=False)
-    g_agg.add_edge_list(np.transpose(agg_mat.nonzero()))
-    g_agg.add_vertex(agg_mat.shape[0] - g_agg.num_vertices())
-    return g_agg
+    return _graph_from_sparse(agg_mat)
 
 
 def supra_adjacency_to_block_tensor(
@@ -759,6 +1000,7 @@ def supra_adjacency_to_block_tensor(
     list of lists
         Block tensor [layers x layers] of adjacency submatrices.
     """
+    _validate_supra_shape(supra, layers, nodes)
     return [
         [supra[i * nodes:(i + 1) * nodes, j * nodes:(j + 1) * nodes] for j in range(layers)]
         for i in range(layers)
@@ -785,12 +1027,7 @@ def node_tensor_to_network_list(
     list of graph_tool.Graph
         One graph per layer.
     """
-    g_list = []
-    for i in range(layers):
-        g = gt.Graph(directed=False)
-        g.add_edge_list(np.transpose(tensor[i].nonzero()))
-        g_list.append(g)
-    return g_list
+    return [_graph_from_sparse(tensor[layer]) for layer in range(layers)]
 
 
 def build_supra_adjacency_matrix_from_extended_edgelist(
@@ -858,35 +1095,64 @@ def create_supra_transition_matrix_virus(
     layers : int
         Number of layers.
     p_intra : float, optional
-        Weight for intra-layer contributions (default=1).
+        Nonnegative relative weight for intra-layer transitions. Inter-layer
+        transitions have weight 1 (default=1).
 
     Returns
     -------
     scipy.sparse matrix
         Row-normalized supra transition matrix.
     """
-    supra_sum = np.array(supra.sum(axis=0).tolist()[0])
+    if nodes < 0 or layers < 0:
+        raise ValueError("nodes and layers must be nonnegative")
+    if not np.isfinite(p_intra) or p_intra < 0.0:
+        raise ValueError("p_intra must be a nonnegative finite value")
+    if len(node_tensor) != layers:
+        raise ValueError(
+            f"node_tensor contains {len(node_tensor)} layers; expected {layers}"
+        )
 
-    blocks = []
-    for l in range(layers):
-        block = sp.identity(nodes).multiply(supra_sum[l * nodes:(l + 1) * nodes] - (layers - 1))
-        blocks.append(block)
+    order = nodes * layers
+    supra = supra.tocsr(copy=True)
+    if supra.shape != (order, order):
+        raise ValueError(
+            f"Incompatible supra shape {supra.shape}; expected {(order, order)}"
+        )
 
-    mat = []
-    for la in range(layers):
-        norm_fac = np.sum(supra_sum.reshape(layers, nodes)[np.delete(np.arange(layers), la)] - (layers - 1), axis=0)
-        norm_fac = np.where(norm_fac != 0, 1 / norm_fac, 0)
-        mat.append([blocks[i].multiply(norm_fac) for i in np.delete(np.arange(layers), la)])
+    intra_layers = []
+    for layer, matrix in enumerate(node_tensor):
+        matrix = matrix.tocsr(copy=False)
+        if matrix.shape != (nodes, nodes):
+            raise ValueError(
+                f"Layer {layer} has shape {matrix.shape}; "
+                f"expected {(nodes, nodes)}"
+            )
+        intra_layers.append(matrix)
 
-    diag_blocks = []
-    for la in range(layers):
-        t0_sum = np.array(list(node_tensor[la].sum(axis=0)))[0][0]
-        t0_sum = np.where(t0_sum != 0, 1 / t0_sum, 0)
-        diag_blocks.append(node_tensor[la].dot(sp.diags(t0_sum)).T)
+    if np.any(supra.data < 0.0) or any(
+        np.any(matrix.data < 0.0) for matrix in intra_layers
+    ):
+        raise ValueError("transition matrices require nonnegative edge weights")
+    if order == 0:
+        return sp.csr_matrix((0, 0), dtype=np.float64)
 
-    for i in range(layers):
-        mat[i].insert(i, diag_blocks[i].multiply(np.array([p_intra] * nodes)))
+    intra = sp.block_diag(intra_layers, format="csr")
+    inter = supra.tolil(copy=True)
+    for layer in range(layers):
+        start = layer * nodes
+        stop = start + nodes
+        inter[start:stop, start:stop] = 0.0
+    inter = inter.tocsr()
+    inter.eliminate_zeros()
 
-    comb_mat = sp.vstack([sp.hstack(mat[i]) for i in range(layers)])
-    valss = np.where(comb_mat.sum(axis=1) != 0, 1 / comb_mat.sum(axis=1), 0).flatten()
-    return comb_mat.T.multiply(valss).T
+    def row_normalize(matrix: sp.spmatrix) -> sp.csr_matrix:
+        matrix = matrix.tocsr(copy=False)
+        row_sums = np.asarray(matrix.sum(axis=1)).ravel()
+        inverse = np.zeros_like(row_sums, dtype=np.float64)
+        nonzero = row_sums > 0.0
+        inverse[nonzero] = 1.0 / row_sums[nonzero]
+        return (sp.diags(inverse, format="csr") @ matrix).tocsr()
+
+    combined = row_normalize(intra).multiply(p_intra)
+    combined = combined + row_normalize(inter)
+    return row_normalize(combined)

@@ -92,6 +92,46 @@ class TestInformationCorrectness:
         with pytest.raises(ValueError):
             build_density_matrix(adj)
 
+    @pytest.mark.parametrize(
+        ("adjacency", "message"),
+        [
+            (sp.csr_matrix((2, 3)), "square"),
+            (
+                sp.csr_matrix(np.array([[0.0, -1.0], [-1.0, 0.0]])),
+                "nonnegative",
+            ),
+            (
+                sp.csr_matrix(np.array([[0.0, np.inf], [np.inf, 0.0]])),
+                "finite",
+            ),
+            (
+                sp.csr_matrix(np.array([[0.0, 1.0j], [1.0j, 0.0]])),
+                "real",
+            ),
+        ],
+        ids=["nonsquare", "negative", "nonfinite", "complex"],
+    )
+    def test_density_rejects_invalid_adjacency(self, adjacency, message):
+        with pytest.raises(ValueError, match=message):
+            build_density_matrix(adjacency)
+
+    def test_density_accepts_nonnegative_symmetric_weights(self):
+        adj = sp.csr_matrix(
+            np.array(
+                [
+                    [0.0, 2.0, 0.5],
+                    [2.0, 0.0, 1.0],
+                    [0.5, 1.0, 0.0],
+                ]
+            )
+        )
+
+        rho = build_density_matrix(adj)
+
+        np.testing.assert_allclose(rho.diagonal().sum(), 1.0)
+        np.testing.assert_allclose(rho.toarray(), rho.toarray().T)
+        assert np.linalg.eigvalsh(rho.toarray()).min() >= -1e-12
+
     def test_density_known_path_p3(self):
         # P3: 0–1–2.  degree = [1, 2, 1], tr(L) = 4.
         # rho diagonal = [1/4, 1/2, 1/4]
@@ -140,6 +180,25 @@ class TestInformationCorrectness:
         h = compute_vn_entropy(rho)
         np.testing.assert_allclose(h, 0.0, atol=1e-10)
 
+    @pytest.mark.parametrize(
+        ("density", "message"),
+        [
+            (
+                sp.csr_matrix(np.array([[0.5, 0.5], [0.0, 0.5]])),
+                "symmetric",
+            ),
+            (sp.eye(2, format="csr") * 0.25, "trace"),
+            (
+                sp.csr_matrix(np.array([[1.1, 0.0], [0.0, -0.1]])),
+                "positive semidefinite",
+            ),
+        ],
+        ids=["asymmetric", "wrong-trace", "indefinite"],
+    )
+    def test_vn_entropy_rejects_invalid_density(self, density, message):
+        with pytest.raises(ValueError, match=message):
+            compute_vn_entropy(density)
+
     def test_vn_entropy_known_complete_k4(self):
         # K4: rho eigenvalues = [0, 1/3, 1/3, 1/3] → H = log(3)
         n = 4
@@ -158,6 +217,20 @@ class TestInformationCorrectness:
         np.testing.assert_allclose(compute_vn_entropy(rho), expected, rtol=1e-6)
 
     # --- compute_js_divergence -----------------------------------------------
+
+    def test_jsd_rejects_directed_adjacency(self):
+        directed = sp.csr_matrix(
+            np.array(
+                [
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [0.0, 0.0, 0.0],
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match="symmetric|undirected"):
+            compute_js_divergence(directed, directed, 0.0, 0.0)
 
     def test_jsd_non_negative(self, net_layer_adjs, net_vn_entropies, net_l):
         for i in range(net_l):
@@ -236,7 +309,8 @@ class TestInformationCorrectness:
 class TestInformationReference:
     """Compare information results against muxViz R reference.
 
-    Pre-computed results are loaded from tests/data/{config}/muxviz_results.json.
+    Pre-computed results are loaded from
+    tests/reference_data/{config}/muxviz_results.json.
     Tests are skipped for configs without reference data or missing metric keys.
     """
 

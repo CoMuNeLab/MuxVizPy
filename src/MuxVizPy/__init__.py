@@ -7,7 +7,8 @@ and mesoscale community detection using stochastic block models.
 
 Modules
 -------
-- core:           VirusMultiplex and VirusMultiplex_from_dirlist constructors
+- decomposition:  Sparse CP/PARAFAC decomposition
+- information:    Entropy and layer-similarity measures
 - versatility:    Multilayer centrality functions
 - global_descriptors: Global properties of multilayer networks
 - topology:       Connected components, LCC, LIC, LVC
@@ -17,18 +18,27 @@ Modules
 - visualization:  3D multiplex plotting and centrality-based edge-colored layouts
 """
 
-from .utils.approx_utils import leading_eigenv_approx
 import importlib
 
+from .utils.approx_utils import leading_eigenv_approx
+
 _LAZY_MODULES = [
-    "versatility", "topology", "mesoscale", "percolation",
-    "global_descriptors", "utils", "visualization",
+    "versatility",
+    "topology",
+    "mesoscale",
+    "percolation",
+    "global_descriptors",
+    "information",
+    "decomposition",
+    "utils",
+    "visualization",
 ]
 
 __all__ = [
     "leading_eigenv_approx",
     *_LAZY_MODULES,
 ]
+
 
 def __getattr__(name):
     if name in _LAZY_MODULES:

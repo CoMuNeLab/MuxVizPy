@@ -96,7 +96,7 @@ def test_supra_graph_builder_retains_trailing_isolated_nodes():
     )
 
     graphs = parsing.supra_adjacency_to_network_list(
-        adjacency, num_layers=1, num_nodes=3
+        adjacency, nodes=3, layers=1
     )
 
     assert len(graphs) == 1

@@ -130,19 +130,24 @@ def get_multi_LVC(g_list: list[gt.Graph], printt: bool = True) -> np.ndarray | l
         lvc = lic
 
 
-def get_connected_components(supra: sps.spmatrix, layers: int, nodes: int) -> np.ndarray:
+def get_connected_components(
+    supra: sps.spmatrix, *, nodes: int, layers: int
+) -> np.ndarray:
     """
     Label connected components in a multilayer network, ensuring each physical
     node receives a consistent component ID across all its layer replicas.
+
+    ``nodes`` and ``layers`` are keyword-only. They are both plain integers, so a
+    positional call could transpose them silently.
 
     Parameters
     ----------
     supra : scipy.sparse matrix
         Supra-adjacency matrix of shape ``(layers * nodes, layers * nodes)``.
-    layers : int
-        Number of layers.
     nodes : int
         Number of physical nodes.
+    layers : int
+        Number of layers.
 
     Returns
     -------
@@ -192,18 +197,23 @@ def get_connected_components(supra: sps.spmatrix, layers: int, nodes: int) -> np
         return_inverse=True,
     )
     return normalized_components
-def get_multi_path_statistics(supra: sps.spmatrix, layers: int, nodes: int) -> dict:
+def get_multi_path_statistics(
+    supra: sps.spmatrix, *, nodes: int, layers: int
+) -> dict:
     """
     Compute multilayer shortest-path statistics.
+
+    ``nodes`` and ``layers`` are keyword-only. They are both plain integers, so a
+    positional call could transpose them silently.
 
     Parameters
     ----------
     supra : scipy.sparse matrix
         Supra-adjacency matrix of shape ``(layers * nodes, layers * nodes)``.
-    layers : int
-        Number of layers.
     nodes : int
         Number of physical nodes.
+    layers : int
+        Number of layers.
 
     Returns
     -------
@@ -294,21 +304,26 @@ def get_multi_path_statistics(supra: sps.spmatrix, layers: int, nodes: int) -> d
             "avg_path_length":avg_path_length,
             "closeness":closeness}
 
-def get_SP_similarity_matrix(supra: sps.spmatrix, layers: int, nodes: int) -> np.ndarray:
+def get_SP_similarity_matrix(
+    supra: sps.spmatrix, *, nodes: int, layers: int
+) -> np.ndarray:
     """
     Compute a shortest-path-based pairwise similarity matrix between layers.
 
     Similarity is derived from the Frobenius norm of per-layer distance
     matrices and normalised to ``[0, 1]``.
 
+    ``nodes`` and ``layers`` are keyword-only. They are both plain integers, so a
+    positional call could transpose them silently.
+
     Parameters
     ----------
     supra : scipy.sparse matrix
         Supra-adjacency matrix of shape ``(layers * nodes, layers * nodes)``.
-    layers : int
-        Number of layers.
     nodes : int
         Number of physical nodes.
+    layers : int
+        Number of layers.
 
     Returns
     -------
@@ -317,7 +332,7 @@ def get_SP_similarity_matrix(supra: sps.spmatrix, layers: int, nodes: int) -> np
     """
     distance_list = []
 
-    g_list = supra_adjacency_to_network_list(supra, layers, nodes)
+    g_list = supra_adjacency_to_network_list(supra, nodes=nodes, layers=layers)
 
     for l in range(layers):
       distance_list.append(gt.topology.shortest_distance(g_list[l]).get_2d_array(g_list[l].get_vertices()))

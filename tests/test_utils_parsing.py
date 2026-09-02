@@ -106,7 +106,7 @@ class TestParsingCorrectness:
     def test_tensor_supra_adjacency_roundtrip(self, sample_tensor):
         """tensor → adjacency → tensor recovers the same structure (binary)."""
         adj = parsing.build_supra_adjacency_matrix_from_tensor(sample_tensor)
-        tensor_back = parsing.build_tensor_from_supra_adjacency_matrix(adj, L, N)
+        tensor_back = parsing.build_tensor_from_supra_adjacency_matrix(adj, nodes=N, layers=L)
 
         # Both should be binary, compare dense
         dense_orig = (sample_tensor.to_dense() != 0).float()
@@ -143,7 +143,7 @@ class TestParsingCorrectness:
     def test_supra_matrix_wrong_shape_raises(self):
         wrong = sp.eye(5, format="csr")
         with pytest.raises(ValueError):
-            parsing.build_tensor_from_supra_adjacency_matrix(wrong, num_layers=2, num_nodes=4)
+            parsing.build_tensor_from_supra_adjacency_matrix(wrong, nodes=4, layers=2)
 
 
 # ============================================================================

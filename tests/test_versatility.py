@@ -217,7 +217,7 @@ class TestVersatilityCorrectness:
     # --- public API shapes ------------------------------------------------
 
     def test_get_multi_degree_shape(self, net_adjacency, net_n, net_l):
-        deg = versatility.get_multi_degree(net_adjacency, net_l, net_n)
+        deg = versatility.get_multi_degree(net_adjacency, nodes=net_n, layers=net_l)
         assert deg.shape == (net_n,)
 
     def test_compute_eigenvector_centrality_public_shape(self, net_adjacency, net_n, net_l):
@@ -473,8 +473,12 @@ class TestVersatilityBackendComparison:
         an aggregate network (parallel edges merged), hornet sums per-layer
         out-degree (keeps parallel edges). Verify both run and produce valid
         shapes and non-negative values."""
-        mv = versatility.get_multi_degree(net_adjacency, net_l, net_n, backend="muxvizpy")
-        hn = versatility.get_multi_degree(net_adjacency, net_l, net_n, backend="hornet")
+        mv = versatility.get_multi_degree(
+            net_adjacency, nodes=net_n, layers=net_l, backend="muxvizpy"
+        )
+        hn = versatility.get_multi_degree(
+            net_adjacency, nodes=net_n, layers=net_l, backend="hornet"
+        )
         assert mv.shape == (net_n,)
         assert hn.shape == (net_n,)
         assert np.all(mv >= 0)
@@ -649,5 +653,7 @@ class TestVersatilityReference:
     def test_multi_degree_hornet_vs_muxviz(self, net_adjacency, net_n, net_l, net_muxviz_results):
         """get_multi_degree hornet backend matches R GetMultiDegree."""
         expected = np.array(net_muxviz_results["indegree"]) + np.array(net_muxviz_results["outdegree"])
-        computed = versatility.get_multi_degree(net_adjacency, net_l, net_n, backend="hornet")
+        computed = versatility.get_multi_degree(
+            net_adjacency, nodes=net_n, layers=net_l, backend="hornet"
+        )
         compare_metrics(computed, expected, "MultiDegree hornet (vs muxViz R derived)")

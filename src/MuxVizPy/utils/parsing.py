@@ -293,18 +293,24 @@ def _graph_from_sparse(
     return graph
 
 
-def supra_adjacency_to_network_list(supra: sp.spmatrix, num_layers: int, num_nodes: int) -> list[gt.Graph]:
+def supra_adjacency_to_network_list(
+    supra: sp.spmatrix, *, nodes: int, layers: int
+) -> list[gt.Graph]:
     """
     Convert a supra-adjacency matrix into a list of graph-tool graphs (one per layer).
+
+    ``nodes`` and ``layers`` are keyword-only. They are both plain integers, so a
+    positional call could transpose them silently.
+
     Args:
-        supra: Supra-adjacency matrix of shape (num_layers*num_nodes, num_layers*num_nodes).
-        num_layers: Number of layers.
-        num_nodes: Number of nodes per layer.
+        supra: Supra-adjacency matrix of shape (layers*nodes, layers*nodes).
+        nodes: Number of nodes per layer.
+        layers: Number of layers.
     Returns:
         List of graph-tool Graph objects, one per layer.
     """
-    _validate_supra_shape(supra, num_layers, num_nodes)
-    intra_networks = build_edge_colored_matrices_from_supra_adjacency_matrix(supra, num_layers)
+    _validate_supra_shape(supra, layers, nodes)
+    intra_networks = build_edge_colored_matrices_from_supra_adjacency_matrix(supra, layers)
     return [_graph_from_sparse(adjacency) for adjacency in intra_networks]
 
 
@@ -766,20 +772,25 @@ def build_supra_adjacency_matrix_from_tensor(t):
     ).tocsr()
 
 
-def build_tensor_from_supra_adjacency_matrix(a, num_layers, num_nodes):
+def build_tensor_from_supra_adjacency_matrix(a, *, nodes, layers):
     """
     Build a tensor of sparse interactions from a supra-adjacency matrix.
+
+    ``nodes`` and ``layers`` are keyword-only. They are both plain integers, and a
+    transposed positional call used to return a valid tensor of shape
+    (layers, nodes, layers, nodes) with nothing to indicate the mistake.
+
     Args:
-        a: sparse supra-adjacency matrix of shape (num_layers*num_nodes, num_layers*num_nodes).
-        num_layers: number of layers in the multi-layer network.
-        num_nodes: number of nodes in each layer of the multi-layer network.
+        a: sparse supra-adjacency matrix of shape (layers*nodes, layers*nodes).
+        nodes: number of nodes in each layer of the multi-layer network.
+        layers: number of layers in the multi-layer network.
     Returns:
-        A sparse tensor of shape (num_nodes, num_layers, num_nodes, num_layers)
+        A sparse tensor of shape (nodes, layers, nodes, layers)
             representing the multi-layer network.
     """
     _require_torch()
-    if a.shape != (num_layers*num_nodes, num_layers*num_nodes):
-        raise ValueError("Input matrix must have shape (num_layers*num_nodes, num_layers*num_nodes).")
+    if a.shape != (layers*nodes, layers*nodes):
+        raise ValueError("Input matrix must have shape (layers*nodes, layers*nodes).")
 
     a = a.tocsr()
     a.sum_duplicates()
@@ -789,10 +800,10 @@ def build_tensor_from_supra_adjacency_matrix(a, num_layers, num_nodes):
     col = a.col
     data = a.data
 
-    layer_from = row // num_nodes
-    node_from = row % num_nodes
-    layer_to = col // num_nodes
-    node_to = col % num_nodes
+    layer_from = row // nodes
+    node_from = row % nodes
+    layer_to = col // nodes
+    node_to = col % nodes
 
     indices = torch.tensor(np.array([node_from, layer_from, node_to, layer_to]), dtype=torch.long)
     values = torch.tensor(data, dtype=torch.float32)
@@ -800,7 +811,7 @@ def build_tensor_from_supra_adjacency_matrix(a, num_layers, num_nodes):
     t = torch.sparse_coo_tensor(
         indices,
         values,
-        size=(num_nodes, num_layers, num_nodes, num_layers),
+        size=(nodes, layers, nodes, layers),
         dtype=torch.float32,
         check_invariants=True,
     )

@@ -6,7 +6,6 @@ from .utils.parsing import (
     get_aggregate_network,
     get_node_tensor_from_network_list,
 )
-from .versatility import *
 
 
 def get_percolation(

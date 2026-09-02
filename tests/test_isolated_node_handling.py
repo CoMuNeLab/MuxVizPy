@@ -29,8 +29,8 @@ def test_supra_graph_builder_retains_isolated_nodes_without_parallel_edges():
 
     graph = parsing.supra_adjacency_to_network_list(
         adjacency,
-        num_layers=1,
-        num_nodes=3,
+        nodes=3,
+        layers=1,
     )[0]
 
     assert graph.num_vertices() == 3
@@ -42,8 +42,8 @@ def test_supra_graph_builder_retains_vertices_for_empty_matrix():
 
     graph = parsing.supra_adjacency_to_network_list(
         adjacency,
-        num_layers=1,
-        num_nodes=3,
+        nodes=3,
+        layers=1,
     )[0]
 
     assert graph.num_vertices() == 3
